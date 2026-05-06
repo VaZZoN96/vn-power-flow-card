@@ -1,0 +1,20 @@
+type: custom:vn-power-flow-card
+title: VN Power Flow
+pv_power: sensor.pv_power
+home_power: sensor.home_power
+grid_power: sensor.grid_power
+battery_power: sensor.battery_power
+battery_soc: sensor.battery_soc
+sun_entity: sun.sun
+cloud_mode: entity
+pv_sky_state: sensor.pv_sky_state
+grid_positive_direction: import
+battery_positive_direction: discharge
+threshold_w: 30
+max_power_w: 10000
+names:
+  pv: PV
+  home: Dom
+  grid: Siec
+  battery: Bateria
+  sun: Slonce
