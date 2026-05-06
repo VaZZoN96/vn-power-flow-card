@@ -1,11 +1,11 @@
 /*
  * VN Power Flow Card
  * Real-time power flow card for Home Assistant
- * Version: 0.7.0
+ * Version: 0.8.0
  */
 
 (() => {
-  const CARD_VERSION = "0.7.0";
+  const CARD_VERSION = "0.8.0";
   const CARD_TAG = "vn-power-flow-card";
   const EDITOR_TAG = "vn-power-flow-card-editor";
 
@@ -48,7 +48,6 @@
     static getStubConfig() {
       return {
         type: `custom:${CARD_TAG}`,
-        title: "VN Power Flow",
 
         pv_power: "sensor.pv_power",
         home_power: "sensor.home_power",
@@ -56,9 +55,13 @@
         battery_power: "sensor.battery_power",
         battery_soc: "sensor.battery_soc",
 
+        grid_import_energy: "sensor.grid_import_today",
+        grid_export_energy: "sensor.grid_export_today",
+
         sun_entity: "sun.sun",
 
         cloud_mode: "auto",
+        sky_state_override: "off",
         pv_sky_state: "sensor.pv_sky_state",
         weather_entity: "weather.home",
         cloud_coverage_entity: "sensor.cloud_coverage",
@@ -72,7 +75,6 @@
 
         show_clouds: true,
         show_snow: true,
-        show_header: true,
         show_details: true,
       };
     }
@@ -88,16 +90,15 @@
       }
 
       this._config = {
-        title: "VN Power Flow",
         threshold_w: 30,
         max_power_w: 10000,
 
         cloud_mode: "auto",
+        sky_state_override: "off",
         show_clouds: true,
         show_snow: true,
         cloud_coverage_threshold: 55,
 
-        show_header: true,
         show_details: true,
 
         grid_positive_direction: "import",
@@ -164,16 +165,13 @@
 
       const batteryTemp1 = this._readNumber(c.battery_temp1);
       const batteryTemp2 = this._readNumber(c.battery_temp2);
-      const batteryMos = this._readNumber(c.battery_mos);
-      const batteryMinCell = this._readNumber(c.battery_min_cell);
-      const batteryMaxCell = this._readNumber(c.battery_max_cell);
-      const batteryRemCap = this._readNumber(c.battery_rem_cap);
 
       const todayPv = this._readNumber(c.today_pv);
       const todayBattCharge = this._readNumber(c.today_batt_chg);
       const todayBattDischarge = this._readNumber(c.batt_dis);
       const todayLoad = this._readNumber(c.today_load);
       const gridImportEnergy = this._readNumber(c.grid_import_energy);
+      const gridExportEnergy = this._readNumber(c.grid_export_energy);
       const inverterTemp = this._readNumber(c.inv_temp);
 
       const gridPositiveDirection = String(
@@ -225,16 +223,6 @@
         batteryDischarge: batteryDischargeW > threshold,
       };
 
-      const activePower =
-        pvW +
-        homeW +
-        gridImportW +
-        gridExportW +
-        batteryChargeW +
-        batteryDischargeW;
-
-      const status = activePower > threshold ? "FLOW" : "IDLE";
-
       const gridMode = flows.gridImport
         ? "import"
         : flows.gridExport
@@ -266,20 +254,6 @@
 
         <ha-card>
           <div class="vnp-card">
-            ${
-              this._bool(c.show_header, true)
-                ? `
-                  <div class="vnp-topbar">
-                    <div class="vnp-title-wrap">
-                      <div class="vnp-title">⚡ ${this._escape(c.title || "VN Power Flow")}</div>
-                      <div class="vnp-subtitle">Real-time power flow card for Home Assistant</div>
-                    </div>
-                    <div class="vnp-status ${status === "FLOW" ? "vnp-status-flow" : ""}">${status}</div>
-                  </div>
-                `
-                : ""
-            }
-
             ${missingEntities.length ? this._warning(missingEntities) : ""}
 
             <div class="vnp-stage vnp-sky-${this._escapeAttr(skyState)}">
@@ -407,13 +381,10 @@
                     ${this._detailBox("Batt Chg", this._formatEnergy(todayBattCharge), "↯")}
                     ${this._detailBox("Batt Dis.", this._formatEnergy(todayBattDischarge), "↯")}
                     ${this._detailBox("Grid Import", this._formatEnergy(gridImportEnergy), "⚡")}
+                    ${this._detailBox("Grid Export", this._formatEnergy(gridExportEnergy), "⚡")}
                     ${this._detailBox("Inv Temp", this._formatTemp(inverterTemp), "🌡")}
-                    ${this._detailBox("Temp 1", this._formatTemp(batteryTemp1), "🌡")}
+                    ${this._detailBox("Batt Temp", this._formatTemp(batteryTemp1), "🌡")}
                     ${this._detailBox("Temp 2", this._formatTemp(batteryTemp2), "🌡")}
-                    ${this._detailBox("MOS Temp", this._formatTemp(batteryMos), "🌡")}
-                    ${this._detailBox("Min Cell", this._formatNumberOrDash(batteryMinCell, "V", 3), "▮")}
-                    ${this._detailBox("Max Cell", this._formatNumberOrDash(batteryMaxCell, "V", 3), "▮")}
-                    ${this._detailBox("Remaining", this._formatNumberOrDash(batteryRemCap, "Ah", 0), "🔋")}
                   </div>
                 `
                 : ""
@@ -452,51 +423,6 @@
         .vnp-card {
           box-sizing: border-box;
           padding: 14px;
-        }
-
-        .vnp-topbar {
-          display: flex;
-          align-items: flex-start;
-          justify-content: space-between;
-          gap: 12px;
-          margin-bottom: 10px;
-        }
-
-        .vnp-title-wrap {
-          min-width: 0;
-        }
-
-        .vnp-title {
-          overflow: hidden;
-          font-size: 18px;
-          font-weight: 800;
-          line-height: 1.15;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .vnp-subtitle {
-          margin-top: 3px;
-          color: var(--vnp-muted);
-          font-size: 12px;
-          line-height: 1.25;
-        }
-
-        .vnp-status {
-          flex: 0 0 auto;
-          border: 1px solid var(--vnp-border);
-          border-radius: 999px;
-          padding: 6px 11px;
-          background: rgba(255,255,255,.08);
-          color: var(--vnp-muted);
-          font-size: 12px;
-          font-weight: 800;
-          letter-spacing: .06em;
-        }
-
-        .vnp-status-flow {
-          color: var(--vnp-sun);
-          box-shadow: 0 0 22px rgba(255,213,79,.20);
         }
 
         .vnp-warning {
@@ -1001,7 +927,7 @@
 
         .vnp-details {
           display: grid;
-          grid-template-columns: repeat(5, minmax(0, 1fr));
+          grid-template-columns: repeat(4, minmax(0, 1fr));
           gap: 8px;
           margin-top: 10px;
         }
@@ -1043,7 +969,6 @@
 
         @media (max-width: 620px) {
           .vnp-card { padding: 12px; }
-          .vnp-subtitle { display: none; }
           .vnp-sky { height: 132px; }
           .vnp-flow-area { min-height: 530px; }
 
@@ -1098,8 +1023,6 @@
         }
 
         @media (max-width: 390px) {
-          .vnp-title { font-size: 16px; }
-          .vnp-status { padding: 6px 9px; font-size: 11px; }
           .vnp-flow-area { min-height: 540px; }
 
           .vnp-grid-node {
@@ -1184,16 +1107,13 @@
 
         "battery_temp1",
         "battery_temp2",
-        "battery_mos",
-        "battery_min_cell",
-        "battery_max_cell",
-        "battery_rem_cap",
 
         "today_pv",
         "today_batt_chg",
         "batt_dis",
         "today_load",
         "grid_import_energy",
+        "grid_export_energy",
         "inv_temp",
 
         "sun_entity",
@@ -1209,6 +1129,13 @@
 
     _skyState(config) {
       const mode = String(config.cloud_mode || "auto").toLowerCase();
+
+      if (
+        config.sky_state_override &&
+        String(config.sky_state_override).toLowerCase() !== "off"
+      ) {
+        return this._normalizeSkyState(config.sky_state_override);
+      }
 
       if (mode === "off") return "clear";
 
@@ -1834,10 +1761,8 @@
               <div class="vnp-section">
                 <h3>General</h3>
                 <div class="vnp-grid">
-                  ${this._field("title", "Title", c.title || "VN Power Flow")}
                   ${this._numberField("threshold_w", "Animation threshold W", c.threshold_w ?? 30)}
                   ${this._numberField("max_power_w", "Max power scale W", c.max_power_w ?? 10000)}
-                  ${this._check("show_header", "Show header", c.show_header !== false)}
                   ${this._check("show_details", "Show detail tiles", c.show_details !== false)}
                 </div>
               </div>
@@ -1872,6 +1797,7 @@
                   ${this._field("grid_active_power", "Alternative grid active power entity", c.grid_active_power || "")}
                   ${this._field("grid_power_alt", "Alternative grid power entity 2", c.grid_power_alt || "")}
                   ${this._field("grid_import_energy", "Grid import energy today/entity", c.grid_import_energy || "")}
+                  ${this._field("grid_export_energy", "Grid export energy today/entity", c.grid_export_energy || "")}
 
                   <label>
                     Positive grid value means
@@ -1898,6 +1824,8 @@
                   ${this._field("goodwe_battery_curr", "Alternative battery current entity", c.goodwe_battery_curr || "")}
                   ${this._field("today_batt_chg", "Today battery charge entity", c.today_batt_chg || "")}
                   ${this._field("batt_dis", "Today battery discharge entity", c.batt_dis || "")}
+                  ${this._field("battery_temp1", "Battery temperature entity", c.battery_temp1 || "")}
+                  ${this._field("battery_temp2", "Battery temperature 2 entity", c.battery_temp2 || "")}
 
                   <label>
                     Positive battery value means
@@ -1910,18 +1838,6 @@
                 <div class="vnp-note">
                   Jeśli dodatnia moc baterii oznacza oddawanie energii do domu/falownika, wybierz “Battery discharging”.
                   Jeśli dodatnia moc oznacza ładowanie baterii, wybierz “Battery charging”.
-                </div>
-              </div>
-
-              <div class="vnp-section">
-                <h3>Battery details</h3>
-                <div class="vnp-grid">
-                  ${this._field("battery_temp1", "Battery temperature 1", c.battery_temp1 || "")}
-                  ${this._field("battery_temp2", "Battery temperature 2", c.battery_temp2 || "")}
-                  ${this._field("battery_mos", "Battery MOS temperature", c.battery_mos || "")}
-                  ${this._field("battery_min_cell", "Battery minimum cell voltage", c.battery_min_cell || "")}
-                  ${this._field("battery_max_cell", "Battery maximum cell voltage", c.battery_max_cell || "")}
-                  ${this._field("battery_rem_cap", "Battery remaining capacity", c.battery_rem_cap || "")}
                 </div>
               </div>
 
@@ -1945,6 +1861,22 @@
                     </select>
                   </label>
 
+                  <label>
+                    Sky state override / test mode
+                    <select data-key="sky_state_override">
+                      <option value="off" ${this._selected(c.sky_state_override, "off")}>Off</option>
+                      <option value="clear" ${this._selected(c.sky_state_override, "clear")}>Clear</option>
+                      <option value="partly_cloudy" ${this._selected(c.sky_state_override, "partly_cloudy")}>Partly cloudy</option>
+                      <option value="cloudy" ${this._selected(c.sky_state_override, "cloudy")}>Cloudy</option>
+                      <option value="overcast" ${this._selected(c.sky_state_override, "overcast")}>Overcast</option>
+                      <option value="rainy" ${this._selected(c.sky_state_override, "rainy")}>Rainy</option>
+                      <option value="snow" ${this._selected(c.sky_state_override, "snow")}>Snow</option>
+                      <option value="snow_or_blocked" ${this._selected(c.sky_state_override, "snow_or_blocked")}>Snow / blocked</option>
+                      <option value="night" ${this._selected(c.sky_state_override, "night")}>Night</option>
+                      <option value="low_sun" ${this._selected(c.sky_state_override, "low_sun")}>Low sun</option>
+                    </select>
+                  </label>
+
                   ${this._check("show_clouds", "Show clouds", c.show_clouds !== false)}
                   ${this._check("show_snow", "Show snow / blocked animation", c.show_snow !== false)}
 
@@ -1955,7 +1887,7 @@
                 </div>
 
                 <div class="vnp-note">
-                  Najlepszy tryb: cloud_mode = entity i własny sensor pv_sky_state.
+                  Do testu ustaw Sky state override na cloudy lub partly cloudy. Po teście ustaw Off.
                   Tryb auto działa tak: najpierw pv_sky_state, potem cloud_coverage_entity, potem weather_entity.
                 </div>
               </div>
@@ -2045,6 +1977,7 @@
           if (actual === undefined) {
             if (
               expected === "auto" ||
+              expected === "off" ||
               expected === "import" ||
               expected === "discharge"
             ) {
