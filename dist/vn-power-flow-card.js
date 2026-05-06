@@ -1,11 +1,10 @@
 /*
  * VN Power Flow Card
- * Real-time power flow card for Home Assistant
- * Version: 0.8.0
+ * Version: 0.9.2
  */
 
 (() => {
-  const CARD_VERSION = "0.8.0";
+  const CARD_VERSION = "0.9.2";
   const CARD_TAG = "vn-power-flow-card";
   const EDITOR_TAG = "vn-power-flow-card-editor";
 
@@ -43,36 +42,27 @@
       this.attachShadow({ mode: "open" });
       this._config = {};
       this._hass = null;
+      this._rendered = false;
+      this._lastSunArcPath = "";
+      this._lastSkyConnectorPath = "";
     }
 
     static getStubConfig() {
       return {
-        type: `custom:${CARD_TAG}`,
-
+        type: "custom:vn-power-flow-card",
         pv_power: "sensor.pv_power",
         home_power: "sensor.home_power",
         grid_power: "sensor.grid_power",
         battery_power: "sensor.battery_power",
         battery_soc: "sensor.battery_soc",
-
-        grid_import_energy: "sensor.grid_import_today",
-        grid_export_energy: "sensor.grid_export_today",
-
         sun_entity: "sun.sun",
-
-        cloud_mode: "auto",
+        cloud_mode: "entity",
         sky_state_override: "off",
         pv_sky_state: "sensor.pv_sky_state",
-        weather_entity: "weather.home",
-        cloud_coverage_entity: "sensor.cloud_coverage",
-        cloud_coverage_threshold: 55,
-
         grid_positive_direction: "import",
         battery_positive_direction: "discharge",
-
         threshold_w: 30,
         max_power_w: 10000,
-
         show_clouds: true,
         show_snow: true,
         show_details: true,
@@ -85,34 +75,30 @@
     }
 
     setConfig(config) {
-      if (!config) {
-        throw new Error("Invalid configuration");
-      }
+      if (!config) throw new Error("Invalid configuration");
 
       this._config = {
         threshold_w: 30,
         max_power_w: 10000,
-
-        cloud_mode: "auto",
+        cloud_mode: "entity",
         sky_state_override: "off",
         show_clouds: true,
         show_snow: true,
-        cloud_coverage_threshold: 55,
-
         show_details: true,
-
         grid_positive_direction: "import",
         battery_positive_direction: "discharge",
-
         ...config,
       };
 
-      this._render();
+      this._rendered = false;
+      this._renderBase();
+      this._update();
     }
 
     set hass(hass) {
       this._hass = hass;
-      this._render();
+      if (!this._rendered) this._renderBase();
+      this._update();
     }
 
     getCardSize() {
@@ -129,8 +115,113 @@
       };
     }
 
-    _render() {
-      if (!this.shadowRoot || !this._config) return;
+    _renderBase() {
+      if (!this.shadowRoot) return;
+
+      this.shadowRoot.innerHTML = `
+        <style>${this._styles()}</style>
+        <ha-card>
+          <div class="vnp-card">
+            <div class="vnp-warning" data-role="warning" hidden></div>
+
+            <div class="vnp-stage" data-role="stage">
+              <section class="vnp-sky">
+                <svg class="vnp-sky-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
+                  <path class="vnp-sun-arc" data-role="sun-arc"></path>
+                  <line class="vnp-horizon" x1="6" y1="86" x2="94" y2="86"></line>
+                  <circle class="vnp-tick" cx="8" cy="86" r="1.1"></circle>
+                  <circle class="vnp-tick" cx="50" cy="86" r="1.1"></circle>
+                  <circle class="vnp-tick" cx="92" cy="86" r="1.1"></circle>
+                </svg>
+
+                <svg class="vnp-sky-flow-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
+                  <path class="vnp-sky-flow" data-role="sky-flow"></path>
+                </svg>
+
+                <div class="vnp-time vnp-time-rise" data-text="sun-rise">--:--</div>
+                <div class="vnp-time vnp-time-noon">12:00</div>
+                <div class="vnp-time vnp-time-set" data-text="sun-set">--:--</div>
+
+                <div class="vnp-sun-marker" data-role="sun-marker">
+                  <div class="vnp-sun-glow"></div>
+                  <div class="vnp-sun-core" data-text="sun-symbol">☀</div>
+                </div>
+
+                <div class="vnp-cloud-layer" data-role="cloud-layer">
+                  <div class="vnp-cloud vnp-cloud-a"></div>
+                  <div class="vnp-cloud vnp-cloud-b"></div>
+                  <div class="vnp-cloud vnp-cloud-c"></div>
+                  <div class="vnp-cloud vnp-cloud-d"></div>
+                  <div class="vnp-cloud vnp-cloud-e"></div>
+                </div>
+
+                <div class="vnp-snow-layer" data-role="snow-layer">
+                  <span>❄</span>
+                  <span>❄</span>
+                  <span>❄</span>
+                  <span>❄</span>
+                </div>
+              </section>
+
+              <section class="vnp-flow-area">
+                <div class="vnp-wire vnp-wire-vertical vnp-wire-sun" data-wire="sun"></div>
+                <div class="vnp-wire vnp-wire-vertical vnp-wire-pv" data-wire="pv"></div>
+                <div class="vnp-wire vnp-wire-vertical vnp-wire-home" data-wire="home"></div>
+                <div class="vnp-wire vnp-wire-horizontal vnp-wire-grid" data-wire="grid"></div>
+                <div class="vnp-wire vnp-wire-horizontal vnp-wire-battery" data-wire="battery"></div>
+
+                <div class="vnp-pv-badge">
+                  <span data-text="pv-label">PV</span>
+                  <strong data-text="pv-power">-- W</strong>
+                  <small data-text="pv-sub">Solar input</small>
+                </div>
+
+                <div class="vnp-inverter" data-role="inverter"></div>
+
+                <div class="vnp-grid-node" data-role="grid-node">
+                  <div data-role="grid-icon"></div>
+                  <div class="vnp-direction-chip" data-text="grid-direction">Idle</div>
+                  <div class="vnp-side-value" data-text="grid-power">0 W</div>
+                  <div class="vnp-side-sub" data-text="grid-sub">0 W</div>
+                </div>
+
+                <div class="vnp-battery-node" data-role="battery-node">
+                  <div data-role="battery-icon"></div>
+                  <div class="vnp-direction-chip" data-text="battery-direction">Idle</div>
+                  <div class="vnp-battery-value" data-text="battery-power">0 W</div>
+                  <div class="vnp-battery-sub" data-text="battery-sub">--% / -- V / -- A</div>
+                </div>
+
+                <div class="vnp-home-node">
+                  <div data-role="home-icon"></div>
+                  <div class="vnp-home-value" data-text="home-power">-- W</div>
+                  <div class="vnp-home-sub" data-text="home-energy">-- kWh</div>
+                </div>
+              </section>
+            </div>
+
+            <div class="vnp-details" data-role="details">
+              ${this._detailTile("today-pv", "Today PV", "☀")}
+              ${this._detailTile("batt-chg", "Batt Chg", "↯")}
+              ${this._detailTile("batt-dis", "Batt Dis.", "↯")}
+              ${this._detailTile("grid-import", "Grid Import", "⚡")}
+              ${this._detailTile("grid-export", "Grid Export", "⚡")}
+              ${this._detailTile("inv-temp", "Inv Temp", "🌡")}
+              ${this._detailTile("batt-temp", "Batt Temp", "🌡")}
+              ${this._detailTile("temp-2", "Temp 2", "🌡")}
+            </div>
+          </div>
+        </ha-card>
+      `;
+
+      this._setHTML('[data-role="inverter"]', this._inverterSvg());
+      this._setHTML('[data-role="home-icon"]', this._homeSvg());
+
+      this._rendered = true;
+    }
+
+    _update() {
+      if (!this._hass || !this._config || !this._rendered) return;
 
       const c = this._config;
       const names = { ...DEFAULT_NAMES, ...(c.names || {}) };
@@ -144,23 +235,11 @@
       const pvW = Math.max(0, pvConfiguredW || pv1W + pv2W);
 
       const homeW = Math.max(0, this._readPower(c.home_power || c.consump));
-
-      const gridRawW = this._readPower(
-        c.grid_power || c.grid_active_power || c.grid_power_alt
-      );
-
+      const gridRawW = this._readPower(c.grid_power || c.grid_active_power || c.grid_power_alt);
       const batteryRawW = this._readPower(c.battery_power);
 
-      const batterySoc = this._firstNumber([
-        c.battery_soc,
-        c.goodwe_battery_soc,
-      ]);
-
-      const batteryCurrent = this._firstNumber([
-        c.battery_current,
-        c.goodwe_battery_curr,
-      ]);
-
+      const batterySoc = this._firstNumber([c.battery_soc, c.goodwe_battery_soc]);
+      const batteryCurrent = this._firstNumber([c.battery_current, c.goodwe_battery_curr]);
       const batteryVoltage = this._readNumber(c.battery_voltage);
 
       const batteryTemp1 = this._readNumber(c.battery_temp1);
@@ -174,41 +253,20 @@
       const gridExportEnergy = this._readNumber(c.grid_export_energy);
       const inverterTemp = this._readNumber(c.inv_temp);
 
-      const gridPositiveDirection = String(
-        c.grid_positive_direction || "import"
-      ).toLowerCase();
+      const gridPositiveDirection = String(c.grid_positive_direction || "import").toLowerCase();
+      const batteryPositiveDirection = String(c.battery_positive_direction || "discharge").toLowerCase();
 
-      const batteryPositiveDirection = String(
-        c.battery_positive_direction || "discharge"
-      ).toLowerCase();
+      const gridImportW = gridPositiveDirection === "import" ? Math.max(0, gridRawW) : Math.max(0, -gridRawW);
+      const gridExportW = gridPositiveDirection === "import" ? Math.max(0, -gridRawW) : Math.max(0, gridRawW);
 
-      const gridImportW =
-        gridPositiveDirection === "import"
-          ? Math.max(0, gridRawW)
-          : Math.max(0, -gridRawW);
-
-      const gridExportW =
-        gridPositiveDirection === "import"
-          ? Math.max(0, -gridRawW)
-          : Math.max(0, gridRawW);
-
-      const batteryDischargeW =
-        batteryPositiveDirection === "discharge"
-          ? Math.max(0, batteryRawW)
-          : Math.max(0, -batteryRawW);
-
-      const batteryChargeW =
-        batteryPositiveDirection === "discharge"
-          ? Math.max(0, -batteryRawW)
-          : Math.max(0, batteryRawW);
+      const batteryDischargeW = batteryPositiveDirection === "discharge" ? Math.max(0, batteryRawW) : Math.max(0, -batteryRawW);
+      const batteryChargeW = batteryPositiveDirection === "discharge" ? Math.max(0, -batteryRawW) : Math.max(0, batteryRawW);
 
       const skyState = this._skyState(c);
+      const cloudLevel = this._cloudLevel(skyState);
 
-      const showClouds =
-        this._bool(c.show_clouds, true) && CLOUDY_STATES.has(skyState);
-
-      const showSnow =
-        this._bool(c.show_snow, true) && SNOW_STATES.has(skyState);
+      const showClouds = this._bool(c.show_clouds, true) && CLOUDY_STATES.has(skyState);
+      const showSnow = this._bool(c.show_snow, true) && SNOW_STATES.has(skyState);
 
       const sun = this._sunData(c.sun_entity || "sun.sun");
       const missingEntities = this._missingEntities(c, this._hass);
@@ -223,17 +281,171 @@
         batteryDischarge: batteryDischargeW > threshold,
       };
 
-      const gridMode = flows.gridImport
-        ? "import"
-        : flows.gridExport
-          ? "export"
-          : "idle";
+      const gridMode = flows.gridImport ? "import" : flows.gridExport ? "export" : "idle";
+      const batteryMode = flows.batteryCharge ? "charge" : flows.batteryDischarge ? "discharge" : "idle";
 
-      const batteryMode = flows.batteryCharge
-        ? "charge"
-        : flows.batteryDischarge
-          ? "discharge"
-          : "idle";
+      this._updateWarning(missingEntities);
+      this._updateSky(skyState, cloudLevel, showClouds, showSnow, sun, flows, pvW, maxPower);
+      this._updateWires(flows, pvW, homeW, gridImportW, gridExportW, batteryChargeW, batteryDischargeW, maxPower);
+      this._updateMainValues(names, pvW, pv1W, pv2W, c, homeW, todayLoad, gridRawW, gridImportW, gridExportW, gridMode, batteryRawW, batterySoc, batteryVoltage, batteryCurrent, batteryMode);
+
+      this._updateDetails({
+        todayPv,
+        todayBattCharge,
+        todayBattDischarge,
+        gridImportEnergy,
+        gridExportEnergy,
+        inverterTemp,
+        batteryTemp1,
+        batteryTemp2,
+      });
+
+      this._setDisplay('[data-role="details"]', this._bool(c.show_details, true));
+    }
+        _updateWarning(missingEntities) {
+      const warning = this._q('[data-role="warning"]');
+      if (!warning) return;
+
+      if (!missingEntities.length) {
+        warning.hidden = true;
+        warning.textContent = "";
+        return;
+      }
+
+      warning.hidden = false;
+      warning.textContent = `Missing or unavailable entities: ${missingEntities.join(", ")}`;
+    }
+
+    _updateSky(skyState, cloudLevel, showClouds, showSnow, sun, flows, pvW, maxPower) {
+      const stage = this._q('[data-role="stage"]');
+      if (stage) {
+        const nextClass = `vnp-stage vnp-sky-${this._escapeClass(skyState)} vnp-cloud-level-${cloudLevel}`;
+        if (stage.className !== nextClass) stage.className = nextClass;
+      }
+
+      const arcPath = this._sunArcPath(sun.noonY);
+      if (arcPath !== this._lastSunArcPath) {
+        this._setAttr('[data-role="sun-arc"]', "d", arcPath);
+        this._lastSunArcPath = arcPath;
+      }
+
+      const connectorPath = this._sunConnectorPath(sun.x, sun.y);
+      if (connectorPath !== this._lastSkyConnectorPath) {
+        this._setAttr('[data-role="sky-flow"]', "d", connectorPath);
+        this._lastSkyConnectorPath = connectorPath;
+      }
+
+      const skyFlow = this._q('[data-role="sky-flow"]');
+      if (skyFlow) {
+        const nextClass = `vnp-sky-flow ${this._flowClass(flows.sunToPv)}`;
+        if (skyFlow.getAttribute("class") !== nextClass) {
+          skyFlow.setAttribute("class", nextClass);
+        }
+        skyFlow.style.setProperty("--duration", `${this._flowDuration(pvW, maxPower)}s`);
+      }
+
+      const marker = this._q('[data-role="sun-marker"]');
+      if (marker) {
+        const nextClass = `vnp-sun-marker ${sun.night ? "vnp-moon" : ""}`;
+        if (marker.className !== nextClass) marker.className = nextClass;
+        marker.style.setProperty("--sun-x", sun.x);
+        marker.style.setProperty("--sun-y", sun.y);
+      }
+
+      this._setText('[data-text="sun-symbol"]', sun.night ? "☾" : "☀");
+      this._setText('[data-text="sun-rise"]', sun.rise);
+      this._setText('[data-text="sun-set"]', sun.set);
+
+      const cloudLayer = this._q('[data-role="cloud-layer"]');
+      if (cloudLayer) {
+        const nextClass = `vnp-cloud-layer vnp-cloud-${cloudLevel} ${showClouds ? "vnp-visible" : ""}`;
+        if (cloudLayer.className !== nextClass) cloudLayer.className = nextClass;
+      }
+
+      const snowLayer = this._q('[data-role="snow-layer"]');
+      if (snowLayer) {
+        const nextClass = `vnp-snow-layer ${showSnow ? "vnp-visible" : ""}`;
+        if (snowLayer.className !== nextClass) snowLayer.className = nextClass;
+      }
+    }
+
+    _updateWires(flows, pvW, homeW, gridImportW, gridExportW, batteryChargeW, batteryDischargeW, maxPower) {
+      this._setWire("sun", flows.sunToPv, "var(--vnp-sun)", this._flowDuration(pvW, maxPower), false);
+      this._setWire("pv", flows.pvToInverter, "var(--vnp-pv)", this._flowDuration(pvW, maxPower), false);
+      this._setWire("home", flows.inverterToHome, "var(--vnp-home)", this._flowDuration(homeW, maxPower), false);
+
+      const gridActive = flows.gridImport || flows.gridExport;
+      const gridColor = flows.gridExport ? "var(--vnp-export)" : "var(--vnp-grid)";
+      this._setWire(
+        "grid",
+        gridActive,
+        gridColor,
+        this._flowDuration(Math.max(gridImportW, gridExportW), maxPower),
+        flows.gridExport
+      );
+
+      const batteryActive = flows.batteryCharge || flows.batteryDischarge;
+      this._setWire(
+        "battery",
+        batteryActive,
+        "var(--vnp-battery)",
+        this._flowDuration(Math.max(batteryChargeW, batteryDischargeW), maxPower),
+        flows.batteryDischarge
+      );
+    }
+
+    _setWire(name, active, color, duration, reverse) {
+      const el = this._q(`[data-wire="${name}"]`);
+      if (!el) return;
+
+      const baseClasses = {
+        sun: "vnp-wire vnp-wire-vertical vnp-wire-sun",
+        pv: "vnp-wire vnp-wire-vertical vnp-wire-pv",
+        home: "vnp-wire vnp-wire-vertical vnp-wire-home",
+        grid: "vnp-wire vnp-wire-horizontal vnp-wire-grid",
+        battery: "vnp-wire vnp-wire-horizontal vnp-wire-battery",
+      };
+
+      const nextClass = `${baseClasses[name]} ${active ? "vnp-active" : ""} ${reverse ? "vnp-reverse" : ""}`.trim();
+
+      if (el.className !== nextClass) el.className = nextClass;
+
+      el.style.setProperty("--wire-color", color);
+      el.style.setProperty("--duration", `${duration}s`);
+    }
+
+    _updateMainValues(
+      names,
+      pvW,
+      pv1W,
+      pv2W,
+      config,
+      homeW,
+      todayLoad,
+      gridRawW,
+      gridImportW,
+      gridExportW,
+      gridMode,
+      batteryRawW,
+      batterySoc,
+      batteryVoltage,
+      batteryCurrent,
+      batteryMode
+    ) {
+      this._setText('[data-text="pv-label"]', names.pv);
+      this._setText('[data-text="pv-power"]', this._formatPower(pvW));
+      this._setText('[data-text="pv-sub"]', this._pvSubText(pv1W, pv2W, config));
+
+      this._setText('[data-text="home-power"]', this._formatPower(homeW));
+      this._setText('[data-text="home-energy"]', this._formatEnergy(todayLoad));
+
+      const gridNode = this._q('[data-role="grid-node"]');
+      if (gridNode) {
+        const nextClass = `vnp-grid-node vnp-grid-${gridMode}`;
+        if (gridNode.className !== nextClass) gridNode.className = nextClass;
+      }
+
+      this._setHTML('[data-role="grid-icon"]', this._pylonSvg(gridMode));
 
       const gridDirectionLabel =
         gridMode === "import"
@@ -242,6 +454,25 @@
             ? "← Export"
             : "Idle";
 
+      this._setText('[data-text="grid-direction"]', gridDirectionLabel);
+      this._setText('[data-text="grid-power"]', this._formatSignedPower(gridRawW));
+      this._setText(
+        '[data-text="grid-sub"]',
+        gridMode === "import"
+          ? this._formatPower(gridImportW)
+          : gridMode === "export"
+            ? this._formatPower(gridExportW)
+            : "0 W"
+      );
+
+      const batteryNode = this._q('[data-role="battery-node"]');
+      if (batteryNode) {
+        const nextClass = `vnp-battery-node vnp-battery-${batteryMode}`;
+        if (batteryNode.className !== nextClass) batteryNode.className = nextClass;
+      }
+
+      this._setHTML('[data-role="battery-icon"]', this._batterySvg(batterySoc));
+
       const batteryDirectionLabel =
         batteryMode === "charge"
           ? "Charge →"
@@ -249,148 +480,33 @@
             ? "← Discharge"
             : "Idle";
 
-      this.shadowRoot.innerHTML = `
-        <style>${this._styles()}</style>
+      this._setText('[data-text="battery-direction"]', batteryDirectionLabel);
+      this._setText('[data-text="battery-power"]', this._formatSignedPower(batteryRawW));
+      this._setText(
+        '[data-text="battery-sub"]',
+        `${Number.isFinite(batterySoc) ? `${Math.round(batterySoc)}%` : "--%"} / ${Number.isFinite(batteryVoltage) ? this._formatNumber(batteryVoltage, "V", 1) : "-- V"} / ${Number.isFinite(batteryCurrent) ? this._formatNumber(batteryCurrent, "A", 1) : "-- A"}`
+      );
+    }
 
-        <ha-card>
-          <div class="vnp-card">
-            ${missingEntities.length ? this._warning(missingEntities) : ""}
+    _updateDetails(values) {
+      this._setText('[data-detail="today-pv"] .vnp-detail-value', this._formatEnergy(values.todayPv));
+      this._setText('[data-detail="batt-chg"] .vnp-detail-value', this._formatEnergy(values.todayBattCharge));
+      this._setText('[data-detail="batt-dis"] .vnp-detail-value', this._formatEnergy(values.todayBattDischarge));
+      this._setText('[data-detail="grid-import"] .vnp-detail-value', this._formatEnergy(values.gridImportEnergy));
+      this._setText('[data-detail="grid-export"] .vnp-detail-value', this._formatEnergy(values.gridExportEnergy));
+      this._setText('[data-detail="inv-temp"] .vnp-detail-value', this._formatTemp(values.inverterTemp));
+      this._setText('[data-detail="batt-temp"] .vnp-detail-value', this._formatTemp(values.batteryTemp1));
+      this._setText('[data-detail="temp-2"] .vnp-detail-value', this._formatTemp(values.batteryTemp2));
+    }
 
-            <div class="vnp-stage vnp-sky-${this._escapeAttr(skyState)}">
-              <section class="vnp-sky" aria-label="Sun trajectory">
-                <svg class="vnp-sky-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                  <path class="vnp-sun-arc" d="${this._sunArcPath(sun.noonY)}"></path>
-                  <line class="vnp-horizon" x1="6" y1="86" x2="94" y2="86"></line>
-                  <circle class="vnp-tick" cx="8" cy="86" r="1.1"></circle>
-                  <circle class="vnp-tick" cx="50" cy="86" r="1.1"></circle>
-                  <circle class="vnp-tick" cx="92" cy="86" r="1.1"></circle>
-                </svg>
-
-                <svg class="vnp-sky-flow-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                  <path
-                    class="vnp-sky-flow ${this._flowClass(flows.sunToPv)}"
-                    style="--duration:${this._flowDuration(pvW, maxPower)}s;"
-                    d="${this._sunConnectorPath(sun.x, sun.y)}"
-                  ></path>
-                </svg>
-
-                <div class="vnp-time vnp-time-rise">${this._escape(sun.rise)}</div>
-                <div class="vnp-time vnp-time-noon">12:00</div>
-                <div class="vnp-time vnp-time-set">${this._escape(sun.set)}</div>
-
-                <div class="vnp-sun-marker ${sun.night ? "vnp-moon" : ""}" style="--sun-x:${sun.x}; --sun-y:${sun.y};">
-                  <div class="vnp-sun-glow"></div>
-                  <div class="vnp-sun-core">${sun.night ? "☾" : "☀"}</div>
-                </div>
-
-                <div class="vnp-cloud-layer ${showClouds ? "vnp-visible" : ""}">
-                  <div class="vnp-cloud vnp-cloud-a"></div>
-                  <div class="vnp-cloud vnp-cloud-b"></div>
-                  <div class="vnp-cloud vnp-cloud-c"></div>
-                </div>
-
-                <div class="vnp-snow-layer ${showSnow ? "vnp-visible" : ""}">
-                  <span>❄</span>
-                  <span>❄</span>
-                  <span>❄</span>
-                  <span>❄</span>
-                </div>
-              </section>
-
-              <section class="vnp-flow-area" aria-label="Power flow">
-                <div
-                  class="vnp-wire vnp-wire-vertical vnp-wire-sun ${flows.sunToPv ? "vnp-active" : ""}"
-                  style="--wire-color: var(--vnp-sun); --duration:${this._flowDuration(pvW, maxPower)}s;"
-                ></div>
-
-                <div
-                  class="vnp-wire vnp-wire-vertical vnp-wire-pv ${flows.pvToInverter ? "vnp-active" : ""}"
-                  style="--wire-color: var(--vnp-pv); --duration:${this._flowDuration(pvW, maxPower)}s;"
-                ></div>
-
-                <div
-                  class="vnp-wire vnp-wire-vertical vnp-wire-home ${flows.inverterToHome ? "vnp-active" : ""}"
-                  style="--wire-color: var(--vnp-home); --duration:${this._flowDuration(homeW, maxPower)}s;"
-                ></div>
-
-                <div
-                  class="vnp-wire vnp-wire-horizontal vnp-wire-grid ${
-                    flows.gridImport || flows.gridExport ? "vnp-active" : ""
-                  } ${flows.gridExport ? "vnp-reverse" : ""}"
-                  style="--wire-color: ${flows.gridExport ? "var(--vnp-export)" : "var(--vnp-grid)"}; --duration:${this._flowDuration(Math.max(gridImportW, gridExportW), maxPower)}s;"
-                ></div>
-
-                <div
-                  class="vnp-wire vnp-wire-horizontal vnp-wire-battery ${
-                    flows.batteryCharge || flows.batteryDischarge ? "vnp-active" : ""
-                  } ${flows.batteryDischarge ? "vnp-reverse" : ""}"
-                  style="--wire-color: var(--vnp-battery); --duration:${this._flowDuration(Math.max(batteryChargeW, batteryDischargeW), maxPower)}s;"
-                ></div>
-
-                <div class="vnp-pv-badge">
-                  <span>${this._escape(names.pv)}</span>
-                  <strong>${this._formatPower(pvW)}</strong>
-                  <small>${this._pvSubText(pv1W, pv2W, c)}</small>
-                </div>
-
-                <div class="vnp-inverter" aria-label="Inverter">
-                  ${this._inverterSvg()}
-                </div>
-
-                <div class="vnp-grid-node vnp-grid-${gridMode}">
-                  ${this._pylonSvg(gridMode)}
-                  <div class="vnp-direction-chip">${gridDirectionLabel}</div>
-                  <div class="vnp-side-value">${this._formatSignedPower(gridRawW)}</div>
-                  <div class="vnp-side-sub">
-                    ${
-                      gridMode === "import"
-                        ? this._formatPower(gridImportW)
-                        : gridMode === "export"
-                          ? this._formatPower(gridExportW)
-                          : "0 W"
-                    }
-                  </div>
-                </div>
-
-                <div class="vnp-battery-node vnp-battery-${batteryMode}">
-                  ${this._batterySvg(batterySoc)}
-                  <div class="vnp-direction-chip">${batteryDirectionLabel}</div>
-                  <div class="vnp-battery-value">${this._formatSignedPower(batteryRawW)}</div>
-                  <div class="vnp-battery-sub">
-                    ${Number.isFinite(batterySoc) ? `${Math.round(batterySoc)}%` : "--%"}
-                    /
-                    ${Number.isFinite(batteryVoltage) ? this._formatNumber(batteryVoltage, "V", 1) : "-- V"}
-                    /
-                    ${Number.isFinite(batteryCurrent) ? this._formatNumber(batteryCurrent, "A", 1) : "-- A"}
-                  </div>
-                </div>
-
-                <div class="vnp-home-node">
-                  ${this._homeSvg()}
-                  <div class="vnp-home-value">${this._formatPower(homeW)}</div>
-                  <div class="vnp-home-sub">${this._formatEnergy(todayLoad)}</div>
-                </div>
-              </section>
-            </div>
-
-            ${
-              this._bool(c.show_details, true)
-                ? `
-                  <div class="vnp-details">
-                    ${this._detailBox("Today PV", this._formatEnergy(todayPv), "☀️")}
-                    ${this._detailBox("Batt Chg", this._formatEnergy(todayBattCharge), "↯")}
-                    ${this._detailBox("Batt Dis.", this._formatEnergy(todayBattDischarge), "↯")}
-                    ${this._detailBox("Grid Import", this._formatEnergy(gridImportEnergy), "⚡")}
-                    ${this._detailBox("Grid Export", this._formatEnergy(gridExportEnergy), "⚡")}
-                    ${this._detailBox("Inv Temp", this._formatTemp(inverterTemp), "🌡")}
-                    ${this._detailBox("Batt Temp", this._formatTemp(batteryTemp1), "🌡")}
-                    ${this._detailBox("Temp 2", this._formatTemp(batteryTemp2), "🌡")}
-                  </div>
-                `
-                : ""
-            }
-          </div>
-        </ha-card>
+    _detailTile(key, label, icon) {
+      return `
+        <div class="vnp-detail" data-detail="${key}">
+          <span class="vnp-detail-label">
+            <span class="vnp-detail-icon">${icon}</span>${label}
+          </span>
+          <span class="vnp-detail-value">--</span>
+        </div>
       `;
     }
 
@@ -453,6 +569,13 @@
           background:
             radial-gradient(circle at 50% 8%, rgba(144,202,249,.14), transparent 28%),
             linear-gradient(180deg, rgba(9,17,32,.96), rgba(4,7,14,.68));
+        }
+
+        .vnp-stage.vnp-cloud-level-overcast,
+        .vnp-stage.vnp-cloud-level-rain,
+        .vnp-stage.vnp-cloud-level-snow {
+          background:
+            linear-gradient(180deg, rgba(73,83,94,.92), rgba(19,24,31,.72));
         }
 
         .vnp-sky {
@@ -552,7 +675,6 @@
           box-shadow: 0 0 10px rgba(255,213,79,.24);
           font-size: 22px;
         }
-
         .vnp-moon .vnp-sun-glow {
           background: radial-gradient(circle, rgba(144,202,249,.24), transparent 72%);
           box-shadow: 0 0 14px rgba(144,202,249,.18);
@@ -566,27 +688,39 @@
         .vnp-cloud-layer {
           position: absolute;
           z-index: 8;
-          left: 28%;
-          top: 46%;
-          width: 44%;
-          height: 38%;
+          left: 24%;
+          top: 38%;
+          width: 52%;
+          height: 48%;
           opacity: 0;
           pointer-events: none;
-          transition: opacity .35s ease;
+          transition: opacity .35s ease, width .35s ease, left .35s ease;
         }
 
-        .vnp-cloud-layer.vnp-visible {
-          opacity: 1;
+        .vnp-cloud-layer.vnp-cloud-partly.vnp-visible {
+          opacity: 0.42;
+        }
+
+        .vnp-cloud-layer.vnp-cloud-cloudy.vnp-visible {
+          opacity: 0.82;
+        }
+
+        .vnp-cloud-layer.vnp-cloud-overcast.vnp-visible,
+        .vnp-cloud-layer.vnp-cloud-rain.vnp-visible,
+        .vnp-cloud-layer.vnp-cloud-snow.vnp-visible {
+          opacity: 0.98;
+          left: 15%;
+          width: 70%;
         }
 
         .vnp-cloud {
           position: absolute;
-          width: 32%;
-          height: 28%;
+          width: 30%;
+          height: 25%;
           border-radius: 999px;
-          background: rgba(236,239,241,.84);
+          background: rgba(236,239,241,.86);
           box-shadow: 0 0 12px rgba(255,255,255,.16);
-          animation: vnpCloud 10s ease-in-out infinite alternate;
+          animation: vnpCloud 12s ease-in-out infinite alternate;
         }
 
         .vnp-cloud::before,
@@ -611,8 +745,26 @@
         }
 
         .vnp-cloud-a { left: 8%; top: 30%; }
-        .vnp-cloud-b { left: 40%; top: 44%; transform: scale(.80); animation-duration: 12s; }
-        .vnp-cloud-c { left: 60%; top: 10%; transform: scale(.68); opacity: .78; animation-duration: 14s; }
+        .vnp-cloud-b { left: 38%; top: 42%; transform: scale(.82); animation-duration: 14s; }
+        .vnp-cloud-c { left: 58%; top: 14%; transform: scale(.70); opacity: .80; animation-duration: 16s; }
+        .vnp-cloud-d { left: 18%; top: 58%; transform: scale(.78); opacity: .78; animation-duration: 18s; }
+        .vnp-cloud-e { left: 72%; top: 48%; transform: scale(.70); opacity: .76; animation-duration: 20s; }
+
+        .vnp-cloud-partly .vnp-cloud-c,
+        .vnp-cloud-partly .vnp-cloud-d,
+        .vnp-cloud-partly .vnp-cloud-e {
+          display: none;
+        }
+
+        .vnp-cloud-cloudy .vnp-cloud-d {
+          display: none;
+        }
+
+        .vnp-cloud-overcast .vnp-cloud,
+        .vnp-cloud-rain .vnp-cloud,
+        .vnp-cloud-snow .vnp-cloud {
+          background: rgba(210,218,224,.92);
+        }
 
         @keyframes vnpCloud {
           from { margin-left: -2%; }
@@ -662,7 +814,7 @@
           position: absolute;
           z-index: 1;
           border-radius: 999px;
-          background: color-mix(in srgb, var(--wire-color), transparent 80%);
+          background: rgba(255,255,255,.11);
           overflow: hidden;
           opacity: 0.9;
         }
@@ -670,13 +822,14 @@
         .vnp-wire::after {
           content: "";
           position: absolute;
-          inset: 0;
           opacity: 0;
         }
 
         .vnp-wire.vnp-active::after {
           opacity: 1;
-          animation: vnpWireMove var(--duration, 1.8s) linear infinite;
+          animation-duration: var(--duration, 1.8s);
+          animation-timing-function: linear;
+          animation-iteration-count: infinite;
         }
 
         .vnp-wire.vnp-reverse::after {
@@ -694,51 +847,47 @@
         }
 
         .vnp-wire-vertical::after {
+          left: 0;
+          top: -16px;
+          width: 100%;
+          height: calc(100% + 32px);
           background:
             repeating-linear-gradient(
               to bottom,
               var(--wire-color) 0 8px,
               transparent 8px 16px
             );
+          animation-name: vnpWireY;
         }
 
         .vnp-wire-horizontal::after {
+          left: -16px;
+          top: 0;
+          width: calc(100% + 32px);
+          height: 100%;
           background:
             repeating-linear-gradient(
               to right,
               var(--wire-color) 0 8px,
               transparent 8px 16px
             );
+          animation-name: vnpWireX;
         }
 
-        .vnp-wire-sun {
-          top: 0;
-          height: 20%;
+        .vnp-wire-sun { top: 0; height: 20%; }
+        .vnp-wire-pv { top: 24%; height: 19%; }
+        .vnp-wire-home { top: 56%; height: 26%; }
+        .vnp-wire-grid { left: 20%; width: 27%; }
+        .vnp-wire-battery { left: 53%; width: 27%; }
+
+        @keyframes vnpWireY {
+          from { transform: translateY(-16px); }
+          to { transform: translateY(0); }
         }
 
-        .vnp-wire-pv {
-          top: 24%;
-          height: 19%;
-        }
-
-        .vnp-wire-home {
-          top: 56%;
-          height: 26%;
-        }
-
-        .vnp-wire-grid {
-          left: 20%;
-          width: 27%;
-        }
-
-        .vnp-wire-battery {
-          left: 53%;
-          width: 27%;
-        }
-
-        @keyframes vnpWireMove {
-          from { background-position: 0 0; }
-          to { background-position: 16px 16px; }
+        @keyframes vnpWireX {
+          from { transform: translateX(-16px); }
+          to { transform: translateX(0); }
         }
 
         @keyframes vnpDash {
@@ -824,13 +973,8 @@
           backdrop-filter: blur(8px);
         }
 
-        .vnp-grid-node {
-          left: 17%;
-        }
-
-        .vnp-battery-node {
-          left: 83%;
-        }
+        .vnp-grid-node { left: 17%; }
+        .vnp-battery-node { left: 83%; }
 
         .vnp-grid-node svg {
           display: block;
@@ -971,84 +1115,26 @@
           .vnp-card { padding: 12px; }
           .vnp-sky { height: 132px; }
           .vnp-flow-area { min-height: 530px; }
-
-          .vnp-inverter {
-            top: 47%;
-            width: 126px;
-            height: 98px;
-          }
-
-          .vnp-pv-badge {
-            top: 18%;
-            width: 116px;
-          }
-
-          .vnp-grid-node {
-            left: 16%;
-            top: 48%;
-            width: 98px;
-            min-height: 154px;
-            padding: 7px;
-          }
-
-          .vnp-battery-node {
-            left: 84%;
-            top: 48%;
-            width: 98px;
-            min-height: 154px;
-            padding: 7px;
-          }
-
-          .vnp-grid-node svg {
-            height: 70px;
-          }
-
-          .vnp-battery-node svg {
-            height: 84px;
-          }
-
-          .vnp-home-node {
-            top: 84%;
-            width: 152px;
-          }
-
-          .vnp-home-node svg {
-            width: 86px;
-            height: 64px;
-          }
-
-          .vnp-details {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-          }
+          .vnp-inverter { top: 47%; width: 126px; height: 98px; }
+          .vnp-pv-badge { top: 18%; width: 116px; }
+          .vnp-grid-node { left: 16%; top: 48%; width: 98px; min-height: 154px; padding: 7px; }
+          .vnp-battery-node { left: 84%; top: 48%; width: 98px; min-height: 154px; padding: 7px; }
+          .vnp-grid-node svg { height: 70px; }
+          .vnp-battery-node svg { height: 84px; }
+          .vnp-home-node { top: 84%; width: 152px; }
+          .vnp-home-node svg { width: 86px; height: 64px; }
+          .vnp-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
 
         @media (max-width: 390px) {
           .vnp-flow-area { min-height: 540px; }
-
-          .vnp-grid-node {
-            left: 15%;
-            width: 90px;
-          }
-
-          .vnp-battery-node {
-            left: 85%;
-            width: 90px;
-          }
-
-          .vnp-inverter {
-            width: 116px;
-            height: 90px;
-          }
-
-          .vnp-pv-badge {
-            width: 108px;
-          }
-
+          .vnp-grid-node { left: 15%; width: 90px; }
+          .vnp-battery-node { left: 85%; width: 90px; }
+          .vnp-inverter { width: 116px; height: 90px; }
+          .vnp-pv-badge { width: 108px; }
           .vnp-side-value,
           .vnp-battery-value,
-          .vnp-home-value {
-            font-size: 15px;
-          }
+          .vnp-home-value { font-size: 15px; }
         }
 
         @media (prefers-reduced-motion: reduce) {
@@ -1062,64 +1148,19 @@
       `;
     }
 
-    _detailBox(label, value, icon) {
-      return `
-        <div class="vnp-detail">
-          <span class="vnp-detail-label">
-            <span class="vnp-detail-icon">${icon}</span>${this._escape(label)}
-          </span>
-          <span class="vnp-detail-value">${this._escape(value)}</span>
-        </div>
-      `;
-    }
-
-    _warning(missingEntities) {
-      return `
-        <div class="vnp-warning">
-          Missing or unavailable entities:
-          ${missingEntities.map((e) => this._escape(e)).join(", ")}
-        </div>
-      `;
-    }
-
     _missingEntities(config, hass) {
       if (!hass) return [];
 
       const keys = [
-        "pv_power",
-        "pv_total_power",
-        "pv1_power",
-        "pv2_power",
-
-        "home_power",
-        "consump",
-
-        "grid_power",
-        "grid_active_power",
-        "grid_power_alt",
-
-        "battery_power",
-        "battery_soc",
-        "goodwe_battery_soc",
-        "battery_current",
-        "goodwe_battery_curr",
-        "battery_voltage",
-
-        "battery_temp1",
-        "battery_temp2",
-
-        "today_pv",
-        "today_batt_chg",
-        "batt_dis",
-        "today_load",
-        "grid_import_energy",
-        "grid_export_energy",
-        "inv_temp",
-
-        "sun_entity",
-        "pv_sky_state",
-        "weather_entity",
-        "cloud_coverage_entity",
+        "pv_power", "pv_total_power", "pv1_power", "pv2_power",
+        "home_power", "consump",
+        "grid_power", "grid_active_power", "grid_power_alt",
+        "battery_power", "battery_soc", "goodwe_battery_soc",
+        "battery_current", "goodwe_battery_curr", "battery_voltage",
+        "battery_temp1", "battery_temp2",
+        "today_pv", "today_batt_chg", "batt_dis", "today_load",
+        "grid_import_energy", "grid_export_energy", "inv_temp",
+        "sun_entity", "pv_sky_state", "weather_entity", "cloud_coverage_entity"
       ];
 
       return keys
@@ -1128,7 +1169,7 @@
     }
 
     _skyState(config) {
-      const mode = String(config.cloud_mode || "auto").toLowerCase();
+      const mode = String(config.cloud_mode || "entity").toLowerCase();
 
       if (
         config.sky_state_override &&
@@ -1148,7 +1189,6 @@
 
       if ((mode === "entity" || mode === "auto") && config.pv_sky_state) {
         const entityState = this._readState(config.pv_sky_state);
-
         if (entityState && !["unknown", "unavailable"].includes(entityState)) {
           return this._normalizeSkyState(entityState);
         }
@@ -1168,7 +1208,6 @@
 
       if (mode === "auto" && config.weather_entity) {
         const weatherState = this._readState(config.weather_entity);
-
         if (weatherState && !["unknown", "unavailable"].includes(weatherState)) {
           return this._normalizeSkyState(weatherState);
         }
@@ -1176,7 +1215,6 @@
 
       return "clear";
     }
-
     _normalizeSkyState(value) {
       const normalized = String(value || "unknown")
         .trim()
@@ -1203,6 +1241,15 @@
       };
 
       return map[normalized] || normalized || "unknown";
+    }
+
+    _cloudLevel(skyState) {
+      if (skyState === "partly_cloudy" || skyState === "partlycloudy") return "partly";
+      if (skyState === "cloudy") return "cloudy";
+      if (skyState === "overcast") return "overcast";
+      if (skyState === "rainy" || skyState === "pouring") return "rain";
+      if (SNOW_STATES.has(skyState)) return "snow";
+      return "none";
     }
 
     _sunData(entityId) {
@@ -1340,7 +1387,6 @@
         }
 
         const declination = -23.44 * Math.cos((2 * Math.PI * (day + 10)) / 365);
-
         return this._clamp(90 - Math.abs(latitude - declination), 5, 75);
       } catch (error) {
         return Number.isFinite(currentElevation)
@@ -1372,10 +1418,8 @@
 
     _pvSubText(pv1W, pv2W, config) {
       const parts = [];
-
       if (config.pv1_power) parts.push(`PV1 ${this._formatPower(pv1W)}`);
       if (config.pv2_power) parts.push(`PV2 ${this._formatPower(pv2W)}`);
-
       return parts.length ? parts.join(" / ") : "Solar input";
     }
 
@@ -1483,10 +1527,6 @@
         : `-- ${unit}`;
     }
 
-    _formatNumberOrDash(value, unit, decimals) {
-      return this._formatNumber(value, unit, decimals);
-    }
-
     _batterySoc(value) {
       return Number.isFinite(value) ? this._clamp(value, 0, 100) : 0;
     }
@@ -1517,17 +1557,48 @@
       return Math.min(max, Math.max(min, value));
     }
 
-    _escape(value) {
-      return String(value ?? "")
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
+    _q(selector) {
+      return this.shadowRoot?.querySelector(selector);
     }
 
-    _escapeAttr(value) {
-      return this._escape(value).replace(/[^a-zA-Z0-9_-]/g, "_");
+    _setText(selector, value) {
+      const el = this._q(selector);
+      if (!el) return;
+
+      const next = String(value ?? "");
+      if (el.textContent !== next) {
+        el.textContent = next;
+      }
+    }
+
+    _setHTML(selector, value) {
+      const el = this._q(selector);
+      if (!el) return;
+
+      const next = String(value ?? "");
+      if (el.innerHTML !== next) {
+        el.innerHTML = next;
+      }
+    }
+
+    _setAttr(selector, attr, value) {
+      const el = this._q(selector);
+      if (!el) return;
+
+      const next = String(value ?? "");
+      if (el.getAttribute(attr) !== next) {
+        el.setAttribute(attr, next);
+      }
+    }
+
+    _setDisplay(selector, visible) {
+      const el = this._q(selector);
+      if (!el) return;
+      el.style.display = visible ? "" : "none";
+    }
+
+    _escapeClass(value) {
+      return String(value ?? "").replace(/[^a-zA-Z0-9_-]/g, "_");
     }
 
     _inverterSvg() {
@@ -1560,7 +1631,6 @@
 
             <rect x="50" y="68" width="88" height="39" rx="7" fill="url(#vnpInvPanel)" stroke="rgba(255,255,255,.78)" stroke-width="1.7"></rect>
             <rect x="50" y="68" width="88" height="8" rx="7" fill="#72c936"></rect>
-
             <rect x="70" y="81" width="36" height="18" rx="2" fill="rgba(134,145,144,.48)"></rect>
 
             <circle cx="124" cy="80" r="2.4" fill="#8bd84f"></circle>
@@ -1586,16 +1656,9 @@
 
       return `
         <svg viewBox="0 0 120 120" role="img" aria-label="Battery">
-          <defs>
-            <linearGradient id="vnpBattShell" x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0" stop-color="rgba(255,255,255,.94)"></stop>
-              <stop offset="1" stop-color="rgba(165,174,180,.72)"></stop>
-            </linearGradient>
-          </defs>
-
           <g filter="drop-shadow(0 10px 12px rgba(0,0,0,.24))">
             <rect x="45" y="11" width="30" height="12" rx="4" fill="rgba(255,255,255,.48)"></rect>
-            <rect x="33" y="23" width="54" height="80" rx="12" fill="rgba(0,0,0,.24)" stroke="url(#vnpBattShell)" stroke-width="4"></rect>
+            <rect x="33" y="23" width="54" height="80" rx="12" fill="rgba(0,0,0,.24)" stroke="rgba(240,240,240,.85)" stroke-width="4"></rect>
             <clipPath id="vnpBattClip">
               <rect x="39" y="29" width="42" height="68" rx="7"></rect>
             </clipPath>
@@ -1638,7 +1701,7 @@
 
     _homeSvg() {
       return `
-        <svg viewBox="0 0 150 108" role="img" aria-label="Home consumption">
+        <svg viewBox="0 0 150 108" role="img" aria-label="Home">
           <defs>
             <linearGradient id="vnpHomeWall" x1="0" x2="0" y1="0" y2="1">
               <stop offset="0" stop-color="rgba(244,248,250,.96)"></stop>
@@ -1688,28 +1751,8 @@
             <style>
               .vnp-editor {
                 display: grid;
-                gap: 14px;
+                gap: 12px;
                 padding: 8px 0;
-              }
-
-              .vnp-section {
-                border: 1px solid var(--divider-color, rgba(255,255,255,.15));
-                border-radius: 12px;
-                padding: 12px;
-                background: rgba(255,255,255,.03);
-              }
-
-              .vnp-section h3 {
-                margin: 0 0 10px;
-                font-size: 14px;
-                font-weight: 700;
-                color: var(--primary-text-color);
-              }
-
-              .vnp-grid {
-                display: grid;
-                grid-template-columns: repeat(2, minmax(0, 1fr));
-                gap: 10px;
               }
 
               .vnp-editor label {
@@ -1729,204 +1772,63 @@
                 background: var(--card-background-color, #111);
                 color: var(--primary-text-color, #fff);
               }
-
-              .vnp-check {
-                display: flex !important;
-                grid-template-columns: none !important;
-                flex-direction: row;
-                align-items: center;
-                gap: 8px !important;
-                min-height: 36px;
-              }
-
-              .vnp-check input {
-                width: auto;
-              }
-
-              .vnp-note {
-                color: var(--secondary-text-color);
-                font-size: 12px;
-                line-height: 1.35;
-                margin-top: 8px;
-              }
-
-              @media (max-width: 560px) {
-                .vnp-grid {
-                  grid-template-columns: 1fr;
-                }
-              }
             </style>
 
             <div class="vnp-editor">
-              <div class="vnp-section">
-                <h3>General</h3>
-                <div class="vnp-grid">
-                  ${this._numberField("threshold_w", "Animation threshold W", c.threshold_w ?? 30)}
-                  ${this._numberField("max_power_w", "Max power scale W", c.max_power_w ?? 10000)}
-                  ${this._check("show_details", "Show detail tiles", c.show_details !== false)}
-                </div>
-              </div>
+              ${this._field("pv_power", "PV total power", c.pv_power || "")}
+              ${this._field("pv1_power", "PV string 1", c.pv1_power || "")}
+              ${this._field("pv2_power", "PV string 2", c.pv2_power || "")}
+              ${this._field("home_power", "Home power", c.home_power || "")}
+              ${this._field("grid_power", "Grid power", c.grid_power || "")}
+              ${this._field("battery_power", "Battery power", c.battery_power || "")}
+              ${this._field("battery_soc", "Battery SOC", c.battery_soc || "")}
 
-              <div class="vnp-section">
-                <h3>PV / Solar</h3>
-                <div class="vnp-grid">
-                  ${this._field("pv_power", "PV total power entity", c.pv_power || "")}
-                  ${this._field("pv_total_power", "Alternative PV total entity", c.pv_total_power || "")}
-                  ${this._field("pv1_power", "PV string 1 entity", c.pv1_power || "")}
-                  ${this._field("pv2_power", "PV string 2 entity", c.pv2_power || "")}
-                  ${this._field("sun_entity", "Sun entity", c.sun_entity || "sun.sun")}
-                </div>
-                <div class="vnp-note">
-                  Możesz użyć jednego sensora PV total albo dwóch stringów PV1/PV2. Jeśli ustawisz total, karta użyje total. Jeśli total jest pusty, karta zsumuje PV1 + PV2.
-                </div>
-              </div>
+              <label>
+                Grid positive value means
+                <select data-key="grid_positive_direction">
+                  <option value="import" ${this._selected(c.grid_positive_direction, "import")}>Import</option>
+                  <option value="export" ${this._selected(c.grid_positive_direction, "export")}>Export</option>
+                </select>
+              </label>
 
-              <div class="vnp-section">
-                <h3>Home consumption</h3>
-                <div class="vnp-grid">
-                  ${this._field("home_power", "Home power entity", c.home_power || "")}
-                  ${this._field("consump", "Alternative home consumption entity", c.consump || "")}
-                  ${this._field("today_load", "Today load energy entity", c.today_load || "")}
-                </div>
-              </div>
+              <label>
+                Battery positive value means
+                <select data-key="battery_positive_direction">
+                  <option value="discharge" ${this._selected(c.battery_positive_direction, "discharge")}>Discharge</option>
+                  <option value="charge" ${this._selected(c.battery_positive_direction, "charge")}>Charge</option>
+                </select>
+              </label>
 
-              <div class="vnp-section">
-                <h3>Grid</h3>
-                <div class="vnp-grid">
-                  ${this._field("grid_power", "Grid power entity", c.grid_power || "")}
-                  ${this._field("grid_active_power", "Alternative grid active power entity", c.grid_active_power || "")}
-                  ${this._field("grid_power_alt", "Alternative grid power entity 2", c.grid_power_alt || "")}
-                  ${this._field("grid_import_energy", "Grid import energy today/entity", c.grid_import_energy || "")}
-                  ${this._field("grid_export_energy", "Grid export energy today/entity", c.grid_export_energy || "")}
+              <label>
+                Cloud mode
+                <select data-key="cloud_mode">
+                  <option value="entity" ${this._selected(c.cloud_mode, "entity")}>Entity</option>
+                  <option value="auto" ${this._selected(c.cloud_mode, "auto")}>Auto</option>
+                  <option value="off" ${this._selected(c.cloud_mode, "off")}>Off</option>
+                </select>
+              </label>
 
-                  <label>
-                    Positive grid value means
-                    <select data-key="grid_positive_direction">
-                      <option value="import" ${this._selected(c.grid_positive_direction, "import")}>Import from grid</option>
-                      <option value="export" ${this._selected(c.grid_positive_direction, "export")}>Export to grid</option>
-                    </select>
-                  </label>
-                </div>
-                <div class="vnp-note">
-                  Jeśli Twój falownik pokazuje dodatnią moc przy poborze z sieci, wybierz “Import from grid”.
-                  Jeśli dodatnia moc oznacza oddawanie do sieci, wybierz “Export to grid”.
-                </div>
-              </div>
+              <label>
+                Sky state override
+                <select data-key="sky_state_override">
+                  <option value="off" ${this._selected(c.sky_state_override, "off")}>Off</option>
+                  <option value="clear" ${this._selected(c.sky_state_override, "clear")}>Clear</option>
+                  <option value="partly_cloudy" ${this._selected(c.sky_state_override, "partly_cloudy")}>Partly cloudy</option>
+                  <option value="cloudy" ${this._selected(c.sky_state_override, "cloudy")}>Cloudy</option>
+                  <option value="overcast" ${this._selected(c.sky_state_override, "overcast")}>Overcast</option>
+                  <option value="rainy" ${this._selected(c.sky_state_override, "rainy")}>Rainy</option>
+                  <option value="snow" ${this._selected(c.sky_state_override, "snow")}>Snow</option>
+                  <option value="snow_or_blocked" ${this._selected(c.sky_state_override, "snow_or_blocked")}>Snow / blocked</option>
+                </select>
+              </label>
 
-              <div class="vnp-section">
-                <h3>Battery</h3>
-                <div class="vnp-grid">
-                  ${this._field("battery_power", "Battery power entity", c.battery_power || "")}
-                  ${this._field("battery_soc", "Battery SOC entity", c.battery_soc || "")}
-                  ${this._field("goodwe_battery_soc", "Alternative battery SOC entity", c.goodwe_battery_soc || "")}
-                  ${this._field("battery_voltage", "Battery voltage entity", c.battery_voltage || "")}
-                  ${this._field("battery_current", "Battery current entity", c.battery_current || "")}
-                  ${this._field("goodwe_battery_curr", "Alternative battery current entity", c.goodwe_battery_curr || "")}
-                  ${this._field("today_batt_chg", "Today battery charge entity", c.today_batt_chg || "")}
-                  ${this._field("batt_dis", "Today battery discharge entity", c.batt_dis || "")}
-                  ${this._field("battery_temp1", "Battery temperature entity", c.battery_temp1 || "")}
-                  ${this._field("battery_temp2", "Battery temperature 2 entity", c.battery_temp2 || "")}
-
-                  <label>
-                    Positive battery value means
-                    <select data-key="battery_positive_direction">
-                      <option value="discharge" ${this._selected(c.battery_positive_direction, "discharge")}>Battery discharging</option>
-                      <option value="charge" ${this._selected(c.battery_positive_direction, "charge")}>Battery charging</option>
-                    </select>
-                  </label>
-                </div>
-                <div class="vnp-note">
-                  Jeśli dodatnia moc baterii oznacza oddawanie energii do domu/falownika, wybierz “Battery discharging”.
-                  Jeśli dodatnia moc oznacza ładowanie baterii, wybierz “Battery charging”.
-                </div>
-              </div>
-
-              <div class="vnp-section">
-                <h3>Inverter / daily values</h3>
-                <div class="vnp-grid">
-                  ${this._field("today_pv", "Today PV generation entity", c.today_pv || "")}
-                  ${this._field("inv_temp", "Inverter temperature entity", c.inv_temp || "")}
-                </div>
-              </div>
-
-              <div class="vnp-section">
-                <h3>Clouds / sky state</h3>
-                <div class="vnp-grid">
-                  <label>
-                    Cloud mode
-                    <select data-key="cloud_mode">
-                      <option value="auto" ${this._selected(c.cloud_mode, "auto")}>Auto</option>
-                      <option value="entity" ${this._selected(c.cloud_mode, "entity")}>Entity</option>
-                      <option value="off" ${this._selected(c.cloud_mode, "off")}>Off</option>
-                    </select>
-                  </label>
-
-                  <label>
-                    Sky state override / test mode
-                    <select data-key="sky_state_override">
-                      <option value="off" ${this._selected(c.sky_state_override, "off")}>Off</option>
-                      <option value="clear" ${this._selected(c.sky_state_override, "clear")}>Clear</option>
-                      <option value="partly_cloudy" ${this._selected(c.sky_state_override, "partly_cloudy")}>Partly cloudy</option>
-                      <option value="cloudy" ${this._selected(c.sky_state_override, "cloudy")}>Cloudy</option>
-                      <option value="overcast" ${this._selected(c.sky_state_override, "overcast")}>Overcast</option>
-                      <option value="rainy" ${this._selected(c.sky_state_override, "rainy")}>Rainy</option>
-                      <option value="snow" ${this._selected(c.sky_state_override, "snow")}>Snow</option>
-                      <option value="snow_or_blocked" ${this._selected(c.sky_state_override, "snow_or_blocked")}>Snow / blocked</option>
-                      <option value="night" ${this._selected(c.sky_state_override, "night")}>Night</option>
-                      <option value="low_sun" ${this._selected(c.sky_state_override, "low_sun")}>Low sun</option>
-                    </select>
-                  </label>
-
-                  ${this._check("show_clouds", "Show clouds", c.show_clouds !== false)}
-                  ${this._check("show_snow", "Show snow / blocked animation", c.show_snow !== false)}
-
-                  ${this._field("pv_sky_state", "PV sky state entity", c.pv_sky_state || "")}
-                  ${this._field("weather_entity", "Weather entity", c.weather_entity || "")}
-                  ${this._field("cloud_coverage_entity", "Cloud coverage entity", c.cloud_coverage_entity || "")}
-                  ${this._numberField("cloud_coverage_threshold", "Cloud coverage threshold %", c.cloud_coverage_threshold ?? 55)}
-                </div>
-
-                <div class="vnp-note">
-                  Do testu ustaw Sky state override na cloudy lub partly cloudy. Po teście ustaw Off.
-                  Tryb auto działa tak: najpierw pv_sky_state, potem cloud_coverage_entity, potem weather_entity.
-                </div>
-              </div>
-
-              <div class="vnp-section">
-                <h3>Display names</h3>
-                <div class="vnp-grid">
-                  ${this._nameField("pv", "PV label", c.names?.pv || "PV")}
-                  ${this._nameField("home", "Home label", c.names?.home || "Home")}
-                  ${this._nameField("grid", "Grid label", c.names?.grid || "Grid")}
-                  ${this._nameField("battery", "Battery label", c.names?.battery || "Battery")}
-                  ${this._nameField("sun", "Sun label", c.names?.sun || "Sun")}
-                </div>
-              </div>
-
-              <div class="vnp-note">
-                Szerokość karty ustawiasz w układzie dashboardu. Karta zgłasza pełną szerokość w Sections view przez getGridOptions().
-              </div>
+              ${this._field("pv_sky_state", "PV sky state", c.pv_sky_state || "")}
+              ${this._field("sun_entity", "Sun entity", c.sun_entity || "sun.sun")}
             </div>
           `;
 
           this.querySelectorAll("input, select").forEach((el) => {
             el.addEventListener("change", () => {
-              if (el.dataset.nameKey) {
-                this._nameChanged(el.dataset.nameKey, el.value);
-                return;
-              }
-
-              if (el.type === "checkbox") {
-                this._valueChanged(el.dataset.key, el.checked);
-                return;
-              }
-
-              if (el.type === "number") {
-                const parsed = Number.parseFloat(el.value);
-                this._valueChanged(el.dataset.key, Number.isFinite(parsed) ? parsed : "");
-                return;
-              }
-
               this._valueChanged(el.dataset.key, el.value);
             });
           });
@@ -1941,33 +1843,6 @@
           `;
         }
 
-        _numberField(key, label, value) {
-          return `
-            <label>
-              ${label}
-              <input type="number" data-key="${key}" value="${this._escapeAttrValue(value)}">
-            </label>
-          `;
-        }
-
-        _check(key, label, checked) {
-          return `
-            <label class="vnp-check">
-              <input type="checkbox" data-key="${key}" ${checked ? "checked" : ""}>
-              ${label}
-            </label>
-          `;
-        }
-
-        _nameField(nameKey, label, value) {
-          return `
-            <label>
-              ${label}
-              <input data-name-key="${nameKey}" value="${this._escapeAttrValue(value)}">
-            </label>
-          `;
-        }
-
         _selected(value, expected) {
           const actual =
             value === undefined || value === null || value === ""
@@ -1976,7 +1851,7 @@
 
           if (actual === undefined) {
             if (
-              expected === "auto" ||
+              expected === "entity" ||
               expected === "off" ||
               expected === "import" ||
               expected === "discharge"
@@ -1998,33 +1873,10 @@
           }
 
           this._config = newConfig;
-          this._fireConfigChanged(newConfig);
-        }
 
-        _nameChanged(nameKey, value) {
-          const newConfig = { ...(this._config || {}) };
-          const names = { ...(newConfig.names || {}) };
-
-          if (value === "" || value === null || value === undefined) {
-            delete names[nameKey];
-          } else {
-            names[nameKey] = value;
-          }
-
-          if (Object.keys(names).length) {
-            newConfig.names = names;
-          } else {
-            delete newConfig.names;
-          }
-
-          this._config = newConfig;
-          this._fireConfigChanged(newConfig);
-        }
-
-        _fireConfigChanged(config) {
           this.dispatchEvent(
             new CustomEvent("config-changed", {
-              detail: { config },
+              detail: { config: newConfig },
               bubbles: true,
               composed: true,
             })
