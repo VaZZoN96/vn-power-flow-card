@@ -1,11 +1,11 @@
 /*
  * VN Power Flow Card
  * Real-time power flow card for Home Assistant
- * Layout v0.6.0
+ * Version: 0.7.0
  */
 
 (() => {
-  const CARD_VERSION = "0.6.0";
+  const CARD_VERSION = "0.7.0";
   const CARD_TAG = "vn-power-flow-card";
   const EDITOR_TAG = "vn-power-flow-card-editor";
 
@@ -30,7 +30,12 @@
     "blocked",
   ]);
 
-  const SNOW_STATES = new Set(["snow", "snowy", "snow_or_blocked", "blocked"]);
+  const SNOW_STATES = new Set([
+    "snow",
+    "snowy",
+    "snow_or_blocked",
+    "blocked",
+  ]);
 
   class VNPowerFlowCard extends HTMLElement {
     constructor() {
@@ -44,18 +49,31 @@
       return {
         type: `custom:${CARD_TAG}`,
         title: "VN Power Flow",
+
         pv_power: "sensor.pv_power",
         home_power: "sensor.home_power",
         grid_power: "sensor.grid_power",
         battery_power: "sensor.battery_power",
         battery_soc: "sensor.battery_soc",
+
         sun_entity: "sun.sun",
-        cloud_mode: "entity",
+
+        cloud_mode: "auto",
         pv_sky_state: "sensor.pv_sky_state",
+        weather_entity: "weather.home",
+        cloud_coverage_entity: "sensor.cloud_coverage",
+        cloud_coverage_threshold: 55,
+
         grid_positive_direction: "import",
         battery_positive_direction: "discharge",
+
         threshold_w: 30,
         max_power_w: 10000,
+
+        show_clouds: true,
+        show_snow: true,
+        show_header: true,
+        show_details: true,
       };
     }
 
@@ -65,19 +83,26 @@
     }
 
     setConfig(config) {
-      if (!config) throw new Error("Invalid configuration");
+      if (!config) {
+        throw new Error("Invalid configuration");
+      }
 
       this._config = {
         title: "VN Power Flow",
         threshold_w: 30,
         max_power_w: 10000,
+
         cloud_mode: "auto",
         show_clouds: true,
         show_snow: true,
-        show_details: true,
+        cloud_coverage_threshold: 55,
+
         show_header: true,
+        show_details: true,
+
         grid_positive_direction: "import",
         battery_positive_direction: "discharge",
+
         ...config,
       };
 
@@ -118,11 +143,13 @@
       const pvW = Math.max(0, pvConfiguredW || pv1W + pv2W);
 
       const homeW = Math.max(0, this._readPower(c.home_power || c.consump));
+
       const gridRawW = this._readPower(
         c.grid_power || c.grid_active_power || c.grid_power_alt
       );
 
       const batteryRawW = this._readPower(c.battery_power);
+
       const batterySoc = this._firstNumber([
         c.battery_soc,
         c.goodwe_battery_soc,
@@ -178,8 +205,10 @@
           : Math.max(0, batteryRawW);
 
       const skyState = this._skyState(c);
+
       const showClouds =
         this._bool(c.show_clouds, true) && CLOUDY_STATES.has(skyState);
+
       const showSnow =
         this._bool(c.show_snow, true) && SNOW_STATES.has(skyState);
 
@@ -339,7 +368,13 @@
                   <div class="vnp-direction-chip">${gridDirectionLabel}</div>
                   <div class="vnp-side-value">${this._formatSignedPower(gridRawW)}</div>
                   <div class="vnp-side-sub">
-                    ${gridMode === "import" ? this._formatPower(gridImportW) : gridMode === "export" ? this._formatPower(gridExportW) : "0 W"}
+                    ${
+                      gridMode === "import"
+                        ? this._formatPower(gridImportW)
+                        : gridMode === "export"
+                          ? this._formatPower(gridExportW)
+                          : "0 W"
+                    }
                   </div>
                 </div>
 
@@ -777,7 +812,7 @@
 
         @keyframes vnpWireMove {
           from { background-position: 0 0; }
-          to { background-position: 0 16px; }
+          to { background-position: 16px 16px; }
         }
 
         @keyframes vnpDash {
@@ -1132,17 +1167,39 @@
         "pv_total_power",
         "pv1_power",
         "pv2_power",
+
         "home_power",
         "consump",
+
         "grid_power",
         "grid_active_power",
         "grid_power_alt",
+
         "battery_power",
         "battery_soc",
         "goodwe_battery_soc",
+        "battery_current",
+        "goodwe_battery_curr",
+        "battery_voltage",
+
+        "battery_temp1",
+        "battery_temp2",
+        "battery_mos",
+        "battery_min_cell",
+        "battery_max_cell",
+        "battery_rem_cap",
+
+        "today_pv",
+        "today_batt_chg",
+        "batt_dis",
+        "today_load",
+        "grid_import_energy",
+        "inv_temp",
+
         "sun_entity",
         "pv_sky_state",
         "weather_entity",
+        "cloud_coverage_entity",
       ];
 
       return keys
@@ -1155,6 +1212,13 @@
 
       if (mode === "off") return "clear";
 
+      const sunEntity = config.sun_entity || "sun.sun";
+      const sunState = this._readState(sunEntity);
+      const elevation = this._readAttributeNumber(sunEntity, "elevation");
+
+      if (sunState === "below_horizon") return "night";
+      if (Number.isFinite(elevation) && elevation < 6) return "low_sun";
+
       if ((mode === "entity" || mode === "auto") && config.pv_sky_state) {
         const entityState = this._readState(config.pv_sky_state);
 
@@ -1163,14 +1227,19 @@
         }
       }
 
-      const sunEntity = config.sun_entity || "sun.sun";
-      const sunState = this._readState(sunEntity);
-      const elevation = this._readAttributeNumber(sunEntity, "elevation");
+      if (mode === "auto" && config.cloud_coverage_entity) {
+        const coverage = this._readNumber(config.cloud_coverage_entity);
+        const threshold = this._number(config.cloud_coverage_threshold, 55);
 
-      if (sunState === "below_horizon") return "night";
-      if (Number.isFinite(elevation) && elevation < 6) return "low_sun";
+        if (Number.isFinite(coverage)) {
+          if (coverage >= 85) return "overcast";
+          if (coverage >= threshold) return "cloudy";
+          if (coverage >= Math.max(20, threshold * 0.55)) return "partly_cloudy";
+          return "clear";
+        }
+      }
 
-      if (config.weather_entity) {
+      if (mode === "auto" && config.weather_entity) {
         const weatherState = this._readState(config.weather_entity);
 
         if (weatherState && !["unknown", "unavailable"].includes(weatherState)) {
@@ -1565,16 +1634,16 @@
             <rect x="50" y="68" width="88" height="39" rx="7" fill="url(#vnpInvPanel)" stroke="rgba(255,255,255,.78)" stroke-width="1.7"></rect>
             <rect x="50" y="68" width="88" height="8" rx="7" fill="#72c936"></rect>
 
-            <rect x="71" y="81" width="36" height="18" rx="2" fill="rgba(134,145,144,.48)"></rect>
+            <rect x="70" y="81" width="36" height="18" rx="2" fill="rgba(134,145,144,.48)"></rect>
 
-            <circle cx="124" cy="82" r="2.4" fill="#8bd84f"></circle>
-            <circle cx="124" cy="92" r="2.4" fill="#8bd84f"></circle>
-            <circle cx="124" cy="102" r="2.4" fill="#ef5350"></circle>
+            <circle cx="124" cy="80" r="2.4" fill="#8bd84f"></circle>
+            <circle cx="124" cy="90" r="2.4" fill="#8bd84f"></circle>
+            <circle cx="124" cy="100" r="2.4" fill="#ef5350"></circle>
 
             <path d="M68 105 H110" stroke="rgba(255,255,255,.75)" stroke-width="2.2" stroke-linecap="round"></path>
-            <rect x="75" y="101" width="8" height="8" rx="1.4" fill="rgba(255,255,255,.22)"></rect>
-            <rect x="86" y="101" width="8" height="8" rx="1.4" fill="rgba(255,255,255,.22)"></rect>
-            <rect x="97" y="101" width="8" height="8" rx="1.4" fill="rgba(255,255,255,.22)"></rect>
+            <rect x="75" y="100" width="8" height="7" rx="1.4" fill="rgba(255,255,255,.22)"></rect>
+            <rect x="86" y="100" width="8" height="7" rx="1.4" fill="rgba(255,255,255,.22)"></rect>
+            <rect x="97" y="100" width="8" height="7" rx="1.4" fill="rgba(255,255,255,.22)"></rect>
           </g>
         </svg>
       `;
@@ -1692,8 +1761,28 @@
             <style>
               .vnp-editor {
                 display: grid;
-                gap: 10px;
+                gap: 14px;
                 padding: 8px 0;
+              }
+
+              .vnp-section {
+                border: 1px solid var(--divider-color, rgba(255,255,255,.15));
+                border-radius: 12px;
+                padding: 12px;
+                background: rgba(255,255,255,.03);
+              }
+
+              .vnp-section h3 {
+                margin: 0 0 10px;
+                font-size: 14px;
+                font-weight: 700;
+                color: var(--primary-text-color);
+              }
+
+              .vnp-grid {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 10px;
               }
 
               .vnp-editor label {
@@ -1714,42 +1803,200 @@
                 color: var(--primary-text-color, #fff);
               }
 
+              .vnp-check {
+                display: flex !important;
+                grid-template-columns: none !important;
+                flex-direction: row;
+                align-items: center;
+                gap: 8px !important;
+                min-height: 36px;
+              }
+
+              .vnp-check input {
+                width: auto;
+              }
+
               .vnp-note {
                 color: var(--secondary-text-color);
                 font-size: 12px;
                 line-height: 1.35;
+                margin-top: 8px;
+              }
+
+              @media (max-width: 560px) {
+                .vnp-grid {
+                  grid-template-columns: 1fr;
+                }
               }
             </style>
 
             <div class="vnp-editor">
-              ${this._field("title", "Title", c.title || "VN Power Flow")}
-              ${this._field("pv_power", "PV power entity", c.pv_power || "")}
-              ${this._field("home_power", "Home power entity", c.home_power || "")}
-              ${this._field("grid_power", "Grid power entity", c.grid_power || "")}
-              ${this._field("battery_power", "Battery power entity", c.battery_power || "")}
-              ${this._field("battery_soc", "Battery SOC entity", c.battery_soc || "")}
+              <div class="vnp-section">
+                <h3>General</h3>
+                <div class="vnp-grid">
+                  ${this._field("title", "Title", c.title || "VN Power Flow")}
+                  ${this._numberField("threshold_w", "Animation threshold W", c.threshold_w ?? 30)}
+                  ${this._numberField("max_power_w", "Max power scale W", c.max_power_w ?? 10000)}
+                  ${this._check("show_header", "Show header", c.show_header !== false)}
+                  ${this._check("show_details", "Show detail tiles", c.show_details !== false)}
+                </div>
+              </div>
 
-              <label>
-                Cloud mode
-                <select data-key="cloud_mode">
-                  <option value="auto" ${c.cloud_mode === "auto" ? "selected" : ""}>auto</option>
-                  <option value="entity" ${c.cloud_mode === "entity" ? "selected" : ""}>entity</option>
-                  <option value="off" ${c.cloud_mode === "off" ? "selected" : ""}>off</option>
-                </select>
-              </label>
+              <div class="vnp-section">
+                <h3>PV / Solar</h3>
+                <div class="vnp-grid">
+                  ${this._field("pv_power", "PV total power entity", c.pv_power || "")}
+                  ${this._field("pv_total_power", "Alternative PV total entity", c.pv_total_power || "")}
+                  ${this._field("pv1_power", "PV string 1 entity", c.pv1_power || "")}
+                  ${this._field("pv2_power", "PV string 2 entity", c.pv2_power || "")}
+                  ${this._field("sun_entity", "Sun entity", c.sun_entity || "sun.sun")}
+                </div>
+                <div class="vnp-note">
+                  Możesz użyć jednego sensora PV total albo dwóch stringów PV1/PV2. Jeśli ustawisz total, karta użyje total. Jeśli total jest pusty, karta zsumuje PV1 + PV2.
+                </div>
+              </div>
 
-              ${this._field("pv_sky_state", "PV sky state entity", c.pv_sky_state || "")}
+              <div class="vnp-section">
+                <h3>Home consumption</h3>
+                <div class="vnp-grid">
+                  ${this._field("home_power", "Home power entity", c.home_power || "")}
+                  ${this._field("consump", "Alternative home consumption entity", c.consump || "")}
+                  ${this._field("today_load", "Today load energy entity", c.today_load || "")}
+                </div>
+              </div>
+
+              <div class="vnp-section">
+                <h3>Grid</h3>
+                <div class="vnp-grid">
+                  ${this._field("grid_power", "Grid power entity", c.grid_power || "")}
+                  ${this._field("grid_active_power", "Alternative grid active power entity", c.grid_active_power || "")}
+                  ${this._field("grid_power_alt", "Alternative grid power entity 2", c.grid_power_alt || "")}
+                  ${this._field("grid_import_energy", "Grid import energy today/entity", c.grid_import_energy || "")}
+
+                  <label>
+                    Positive grid value means
+                    <select data-key="grid_positive_direction">
+                      <option value="import" ${this._selected(c.grid_positive_direction, "import")}>Import from grid</option>
+                      <option value="export" ${this._selected(c.grid_positive_direction, "export")}>Export to grid</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="vnp-note">
+                  Jeśli Twój falownik pokazuje dodatnią moc przy poborze z sieci, wybierz “Import from grid”.
+                  Jeśli dodatnia moc oznacza oddawanie do sieci, wybierz “Export to grid”.
+                </div>
+              </div>
+
+              <div class="vnp-section">
+                <h3>Battery</h3>
+                <div class="vnp-grid">
+                  ${this._field("battery_power", "Battery power entity", c.battery_power || "")}
+                  ${this._field("battery_soc", "Battery SOC entity", c.battery_soc || "")}
+                  ${this._field("goodwe_battery_soc", "Alternative battery SOC entity", c.goodwe_battery_soc || "")}
+                  ${this._field("battery_voltage", "Battery voltage entity", c.battery_voltage || "")}
+                  ${this._field("battery_current", "Battery current entity", c.battery_current || "")}
+                  ${this._field("goodwe_battery_curr", "Alternative battery current entity", c.goodwe_battery_curr || "")}
+                  ${this._field("today_batt_chg", "Today battery charge entity", c.today_batt_chg || "")}
+                  ${this._field("batt_dis", "Today battery discharge entity", c.batt_dis || "")}
+
+                  <label>
+                    Positive battery value means
+                    <select data-key="battery_positive_direction">
+                      <option value="discharge" ${this._selected(c.battery_positive_direction, "discharge")}>Battery discharging</option>
+                      <option value="charge" ${this._selected(c.battery_positive_direction, "charge")}>Battery charging</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="vnp-note">
+                  Jeśli dodatnia moc baterii oznacza oddawanie energii do domu/falownika, wybierz “Battery discharging”.
+                  Jeśli dodatnia moc oznacza ładowanie baterii, wybierz “Battery charging”.
+                </div>
+              </div>
+
+              <div class="vnp-section">
+                <h3>Battery details</h3>
+                <div class="vnp-grid">
+                  ${this._field("battery_temp1", "Battery temperature 1", c.battery_temp1 || "")}
+                  ${this._field("battery_temp2", "Battery temperature 2", c.battery_temp2 || "")}
+                  ${this._field("battery_mos", "Battery MOS temperature", c.battery_mos || "")}
+                  ${this._field("battery_min_cell", "Battery minimum cell voltage", c.battery_min_cell || "")}
+                  ${this._field("battery_max_cell", "Battery maximum cell voltage", c.battery_max_cell || "")}
+                  ${this._field("battery_rem_cap", "Battery remaining capacity", c.battery_rem_cap || "")}
+                </div>
+              </div>
+
+              <div class="vnp-section">
+                <h3>Inverter / daily values</h3>
+                <div class="vnp-grid">
+                  ${this._field("today_pv", "Today PV generation entity", c.today_pv || "")}
+                  ${this._field("inv_temp", "Inverter temperature entity", c.inv_temp || "")}
+                </div>
+              </div>
+
+              <div class="vnp-section">
+                <h3>Clouds / sky state</h3>
+                <div class="vnp-grid">
+                  <label>
+                    Cloud mode
+                    <select data-key="cloud_mode">
+                      <option value="auto" ${this._selected(c.cloud_mode, "auto")}>Auto</option>
+                      <option value="entity" ${this._selected(c.cloud_mode, "entity")}>Entity</option>
+                      <option value="off" ${this._selected(c.cloud_mode, "off")}>Off</option>
+                    </select>
+                  </label>
+
+                  ${this._check("show_clouds", "Show clouds", c.show_clouds !== false)}
+                  ${this._check("show_snow", "Show snow / blocked animation", c.show_snow !== false)}
+
+                  ${this._field("pv_sky_state", "PV sky state entity", c.pv_sky_state || "")}
+                  ${this._field("weather_entity", "Weather entity", c.weather_entity || "")}
+                  ${this._field("cloud_coverage_entity", "Cloud coverage entity", c.cloud_coverage_entity || "")}
+                  ${this._numberField("cloud_coverage_threshold", "Cloud coverage threshold %", c.cloud_coverage_threshold ?? 55)}
+                </div>
+
+                <div class="vnp-note">
+                  Najlepszy tryb: cloud_mode = entity i własny sensor pv_sky_state.
+                  Tryb auto działa tak: najpierw pv_sky_state, potem cloud_coverage_entity, potem weather_entity.
+                </div>
+              </div>
+
+              <div class="vnp-section">
+                <h3>Display names</h3>
+                <div class="vnp-grid">
+                  ${this._nameField("pv", "PV label", c.names?.pv || "PV")}
+                  ${this._nameField("home", "Home label", c.names?.home || "Home")}
+                  ${this._nameField("grid", "Grid label", c.names?.grid || "Grid")}
+                  ${this._nameField("battery", "Battery label", c.names?.battery || "Battery")}
+                  ${this._nameField("sun", "Sun label", c.names?.sun || "Sun")}
+                </div>
+              </div>
 
               <div class="vnp-note">
-                Szerokość karty ustawiasz w układzie dashboardu. Ta karta zgłasza domyślnie pełną szerokość w Sections view.
+                Szerokość karty ustawiasz w układzie dashboardu. Karta zgłasza pełną szerokość w Sections view przez getGridOptions().
               </div>
             </div>
           `;
 
           this.querySelectorAll("input, select").forEach((el) => {
-            el.addEventListener("change", () =>
-              this._valueChanged(el.dataset.key, el.value)
-            );
+            el.addEventListener("change", () => {
+              if (el.dataset.nameKey) {
+                this._nameChanged(el.dataset.nameKey, el.value);
+                return;
+              }
+
+              if (el.type === "checkbox") {
+                this._valueChanged(el.dataset.key, el.checked);
+                return;
+              }
+
+              if (el.type === "number") {
+                const parsed = Number.parseFloat(el.value);
+                this._valueChanged(el.dataset.key, Number.isFinite(parsed) ? parsed : "");
+                return;
+              }
+
+              this._valueChanged(el.dataset.key, el.value);
+            });
           });
         }
 
@@ -1757,26 +2004,106 @@
           return `
             <label>
               ${label}
-              <input data-key="${key}" value="${String(value).replace(/"/g, "&quot;")}">
+              <input data-key="${key}" value="${this._escapeAttrValue(value)}">
             </label>
           `;
+        }
+
+        _numberField(key, label, value) {
+          return `
+            <label>
+              ${label}
+              <input type="number" data-key="${key}" value="${this._escapeAttrValue(value)}">
+            </label>
+          `;
+        }
+
+        _check(key, label, checked) {
+          return `
+            <label class="vnp-check">
+              <input type="checkbox" data-key="${key}" ${checked ? "checked" : ""}>
+              ${label}
+            </label>
+          `;
+        }
+
+        _nameField(nameKey, label, value) {
+          return `
+            <label>
+              ${label}
+              <input data-name-key="${nameKey}" value="${this._escapeAttrValue(value)}">
+            </label>
+          `;
+        }
+
+        _selected(value, expected) {
+          const actual =
+            value === undefined || value === null || value === ""
+              ? undefined
+              : String(value);
+
+          if (actual === undefined) {
+            if (
+              expected === "auto" ||
+              expected === "import" ||
+              expected === "discharge"
+            ) {
+              return "selected";
+            }
+          }
+
+          return actual === expected ? "selected" : "";
         }
 
         _valueChanged(key, value) {
           const newConfig = { ...(this._config || {}) };
 
-          if (value === "") delete newConfig[key];
-          else newConfig[key] = value;
+          if (value === "" || value === null || value === undefined) {
+            delete newConfig[key];
+          } else {
+            newConfig[key] = value;
+          }
 
           this._config = newConfig;
+          this._fireConfigChanged(newConfig);
+        }
 
+        _nameChanged(nameKey, value) {
+          const newConfig = { ...(this._config || {}) };
+          const names = { ...(newConfig.names || {}) };
+
+          if (value === "" || value === null || value === undefined) {
+            delete names[nameKey];
+          } else {
+            names[nameKey] = value;
+          }
+
+          if (Object.keys(names).length) {
+            newConfig.names = names;
+          } else {
+            delete newConfig.names;
+          }
+
+          this._config = newConfig;
+          this._fireConfigChanged(newConfig);
+        }
+
+        _fireConfigChanged(config) {
           this.dispatchEvent(
             new CustomEvent("config-changed", {
-              detail: { config: newConfig },
+              detail: { config },
               bubbles: true,
               composed: true,
             })
           );
+        }
+
+        _escapeAttrValue(value) {
+          return String(value ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/"/g, "&quot;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
         }
       }
     );
