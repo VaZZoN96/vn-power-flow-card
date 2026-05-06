@@ -1,11 +1,11 @@
 /*
  * VN Power Flow Card
  * Real-time power flow card for Home Assistant
- * K-flow-like layout, original implementation
+ * Layout v0.4.0
  */
 
 (() => {
-  const CARD_VERSION = "0.3.0";
+  const CARD_VERSION = "0.4.0";
   const CARD_TAG = "vn-power-flow-card";
 
   const DEFAULT_NAMES = {
@@ -13,7 +13,6 @@
     home: "Home",
     grid: "Grid",
     battery: "Battery",
-    inverter: "Inverter",
     sun: "Sun",
   };
 
@@ -77,7 +76,7 @@
         show_clouds: true,
         show_snow: true,
         show_details: true,
-        show_inverter_details: true,
+        show_header: true,
         grid_positive_direction: "import",
         battery_positive_direction: "discharge",
         ...config,
@@ -92,7 +91,16 @@
     }
 
     getCardSize() {
-      return 7;
+      return this._bool(this._config?.show_details, true) ? 8 : 6;
+    }
+
+    getGridOptions() {
+      return {
+        columns: "full",
+        rows: 12,
+        min_rows: 10,
+        max_rows: 18,
+      };
     }
 
     _render() {
@@ -191,35 +199,48 @@
 
         <ha-card>
           <div class="vnp-card">
-            <div class="vnp-topbar">
-              <div class="vnp-title-wrap">
-                <div class="vnp-title">⚡ ${this._escape(config.title || "VN Power Flow")}</div>
-                <div class="vnp-subtitle">Real-time power flow card for Home Assistant</div>
-              </div>
+            ${
+              this._bool(config.show_header, true)
+                ? `
+                  <div class="vnp-topbar">
+                    <div class="vnp-title-wrap">
+                      <div class="vnp-title">⚡ ${this._escape(config.title || "VN Power Flow")}</div>
+                      <div class="vnp-subtitle">Real-time power flow card for Home Assistant</div>
+                    </div>
 
-              <div class="vnp-status ${status === "FLOW" ? "vnp-status-flow" : ""}">
-                ${status}
-              </div>
-            </div>
+                    <div class="vnp-status ${status === "FLOW" ? "vnp-status-flow" : ""}">
+                      ${status}
+                    </div>
+                  </div>
+                `
+                : ""
+            }
 
             ${missingEntities.length ? this._warning(missingEntities) : ""}
 
-            <div class="vnp-kflow-stage vnp-sky-${this._escapeAttr(skyState)}">
-              <div class="vnp-sky">
-                <svg class="vnp-sky-svg" viewBox="0 0 100 34" preserveAspectRatio="none" aria-hidden="true">
-                  <path class="vnp-sun-arc" d="M8 26 C25 2 75 2 92 26"></path>
-                  <line class="vnp-horizon" x1="6" y1="27" x2="94" y2="27"></line>
-                  <circle class="vnp-tick" cx="8" cy="27" r="0.8"></circle>
-                  <circle class="vnp-tick" cx="50" cy="27" r="0.8"></circle>
-                  <circle class="vnp-tick" cx="92" cy="27" r="0.8"></circle>
+            <div class="vnp-stage vnp-sky-${this._escapeAttr(skyState)}">
+              <section class="vnp-sky" aria-label="Sun trajectory">
+                <svg class="vnp-sky-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                  <path
+                    class="vnp-sun-arc"
+                    d="${this._sunArcPath(sun.noonY)}"
+                  ></path>
+                  <line class="vnp-horizon" x1="6" y1="86" x2="94" y2="86"></line>
+                  <circle class="vnp-tick" cx="8" cy="86" r="1.1"></circle>
+                  <circle class="vnp-tick" cx="50" cy="86" r="1.1"></circle>
+                  <circle class="vnp-tick" cx="92" cy="86" r="1.1"></circle>
                 </svg>
 
                 <div class="vnp-time vnp-time-rise">${this._escape(sun.rise)}</div>
                 <div class="vnp-time vnp-time-noon">12:00</div>
                 <div class="vnp-time vnp-time-set">${this._escape(sun.set)}</div>
 
-                <div class="vnp-sun-marker ${sun.night ? "vnp-moon" : ""}" style="--sun-x:${sun.x}; --sun-y:${sun.y};">
-                  <div class="vnp-sun-rays"></div>
+                <div
+                  class="vnp-sun-marker ${sun.night ? "vnp-moon" : ""}"
+                  style="--sun-x:${sun.x}; --sun-y:${sun.y};"
+                  title="${this._escapeAttr(names.sun)}"
+                >
+                  <div class="vnp-sun-glow"></div>
                   <div class="vnp-sun-core">${sun.night ? "☾" : "☀"}</div>
                 </div>
 
@@ -235,13 +256,13 @@
                   <span>❄</span>
                   <span>❄</span>
                 </div>
-              </div>
+              </section>
 
-              <div class="vnp-main">
+              <section class="vnp-flow-area" aria-label="Power flow">
                 <svg class="vnp-flow-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
                   <defs>
                     <filter id="vnpGlow" x="-60%" y="-60%" width="220%" height="220%">
-                      <feGaussianBlur stdDeviation="0.9" result="blur"></feGaussianBlur>
+                      <feGaussianBlur stdDeviation="0.55" result="blur"></feGaussianBlur>
                       <feMerge>
                         <feMergeNode in="blur"></feMergeNode>
                         <feMergeNode in="SourceGraphic"></feMergeNode>
@@ -249,78 +270,70 @@
                     </filter>
                   </defs>
 
-                  <path class="vnp-flow vnp-flow-sun ${this._flowClass(flows.sunToPv)}"
-                    style="--power:${this._flowStrength(pvW, maxPower)}"
-                    d="M18 5 C20 13 23 19 27 26"></path>
+                  <path
+                    class="vnp-flow vnp-flow-sun ${this._flowClass(flows.sunToPv)}"
+                    style="--power:${this._flowStrength(pvW, maxPower)}; --duration:${this._flowDuration(pvW, maxPower)}s;"
+                    d="M50 0 C50 8 50 13 50 20"
+                  ></path>
 
-                  <path class="vnp-flow vnp-flow-pv ${this._flowClass(flows.pvToInverter)}"
-                    style="--power:${this._flowStrength(pvW, maxPower)}"
-                    d="M30 30 C38 38 43 43 50 49"></path>
+                  <path
+                    class="vnp-flow vnp-flow-pv ${this._flowClass(flows.pvToInverter)}"
+                    style="--power:${this._flowStrength(pvW, maxPower)}; --duration:${this._flowDuration(pvW, maxPower)}s;"
+                    d="M50 24 C50 32 50 38 50 44"
+                  ></path>
 
-                  <path class="vnp-flow vnp-flow-home ${this._flowClass(flows.inverterToHome)}"
-                    style="--power:${this._flowStrength(homeW, maxPower)}"
-                    d="M50 56 C44 64 38 70 31 76"></path>
+                  <path
+                    class="vnp-flow vnp-flow-home ${this._flowClass(flows.inverterToHome)}"
+                    style="--power:${this._flowStrength(homeW, maxPower)}; --duration:${this._flowDuration(homeW, maxPower)}s;"
+                    d="M50 53 C50 64 50 73 50 83"
+                  ></path>
 
-                  <path class="vnp-flow vnp-flow-grid ${this._flowClass(flows.gridImport)} vnp-reverse"
-                    style="--power:${this._flowStrength(gridImportW, maxPower)}"
-                    d="M70 77 C63 70 57 64 51 56"></path>
+                  <path
+                    class="vnp-flow vnp-flow-grid ${this._flowClass(flows.gridImport)}"
+                    style="--power:${this._flowStrength(gridImportW, maxPower)}; --duration:${this._flowDuration(gridImportW, maxPower)}s;"
+                    d="M20 49 C31 49 39 49 47 49"
+                  ></path>
 
-                  <path class="vnp-flow vnp-flow-export ${this._flowClass(flows.gridExport)}"
-                    style="--power:${this._flowStrength(gridExportW, maxPower)}"
-                    d="M51 56 C57 64 63 70 70 77"></path>
+                  <path
+                    class="vnp-flow vnp-flow-export ${this._flowClass(flows.gridExport)} vnp-reverse"
+                    style="--power:${this._flowStrength(gridExportW, maxPower)}; --duration:${this._flowDuration(gridExportW, maxPower)}s;"
+                    d="M20 49 C31 49 39 49 47 49"
+                  ></path>
 
-                  <path class="vnp-flow vnp-flow-battery ${this._flowClass(flows.batteryCharge)}"
-                    style="--power:${this._flowStrength(batteryChargeW, maxPower)}"
-                    d="M55 50 C64 44 71 39 79 34"></path>
+                  <path
+                    class="vnp-flow vnp-flow-battery ${this._flowClass(flows.batteryCharge)}"
+                    style="--power:${this._flowStrength(batteryChargeW, maxPower)}; --duration:${this._flowDuration(batteryChargeW, maxPower)}s;"
+                    d="M53 49 C61 49 69 49 80 49"
+                  ></path>
 
-                  <path class="vnp-flow vnp-flow-battery ${this._flowClass(flows.batteryDischarge)} vnp-reverse"
-                    style="--power:${this._flowStrength(batteryDischargeW, maxPower)}"
-                    d="M55 50 C64 44 71 39 79 34"></path>
+                  <path
+                    class="vnp-flow vnp-flow-battery ${this._flowClass(flows.batteryDischarge)} vnp-reverse"
+                    style="--power:${this._flowStrength(batteryDischargeW, maxPower)}; --duration:${this._flowDuration(batteryDischargeW, maxPower)}s;"
+                    d="M53 49 C61 49 69 49 80 49"
+                  ></path>
                 </svg>
 
-                <div class="vnp-node vnp-pv-node" style="--x:29; --y:31;">
-                  <div class="vnp-node-label">${this._escape(names.pv)}</div>
-                  <div class="vnp-node-main">${this._formatPower(pvW)}</div>
-                  <div class="vnp-mini-row">
-                    <span>PV1</span>
-                    <strong>${this._formatPowerOrDash(pv1W, config.pv1_power)}</strong>
-                  </div>
-                  <div class="vnp-mini-row">
-                    <span>PV2</span>
-                    <strong>${this._formatPowerOrDash(pv2W, config.pv2_power)}</strong>
-                  </div>
+                <div class="vnp-pv-badge">
+                  <span>${this._escape(names.pv)}</span>
+                  <strong>${this._formatPower(pvW)}</strong>
+                  <small>${this._pvSubText(pv1W, pv2W, config)}</small>
                 </div>
 
-                <div class="vnp-inverter" style="--x:50; --y:52;">
-                  <div class="vnp-inverter-icon">☀️</div>
-                  <div class="vnp-inverter-title">${this._escape(names.inverter)}</div>
-                  <div class="vnp-inverter-value">${Number.isFinite(inverterTemp) ? this._formatNumber(inverterTemp, "°C", 0) : "INV"}</div>
+                <div class="vnp-inverter" title="Inverter">
+                  ${this._inverterSvg()}
                 </div>
 
-                <div class="vnp-node vnp-home-node" style="--x:29; --y:78;">
-                  <div class="vnp-node-label">${this._escape(names.home)}</div>
-                  <div class="vnp-node-main">${this._formatPower(homeW)}</div>
-                  <div class="vnp-mini-row">
-                    <span>Today</span>
-                    <strong>${this._formatEnergy(todayLoad)}</strong>
-                  </div>
+                <div class="vnp-grid-node">
+                  ${this._pylonSvg()}
+                  <div class="vnp-side-value">${this._formatSignedPower(gridRawW)}</div>
+                  <div class="vnp-side-sub">${gridImportW >= gridExportW ? "Import" : "Export"} ${gridImportW >= gridExportW ? this._formatPower(gridImportW) : this._formatPower(gridExportW)}</div>
                 </div>
 
-                <div class="vnp-node vnp-grid-node" style="--x:72; --y:78;">
-                  <div class="vnp-node-label">${this._escape(names.grid)}</div>
-                  <div class="vnp-node-main">${this._formatSignedPower(gridRawW)}</div>
-                  <div class="vnp-mini-row">
-                    <span>${gridImportW >= gridExportW ? "Import" : "Export"}</span>
-                    <strong>${gridImportW >= gridExportW ? this._formatPower(gridImportW) : this._formatPower(gridExportW)}</strong>
-                  </div>
-                </div>
-
-                <div class="vnp-battery" style="--x:81; --y:37;">
+                <div class="vnp-battery-node">
                   <div class="vnp-battery-head">
                     <span>${this._escape(names.battery)}</span>
                     <strong>${Number.isFinite(batterySoc) ? `${Math.round(batterySoc)}%` : "--%"}</strong>
                   </div>
-
                   <div class="vnp-battery-shell">
                     <div class="vnp-battery-fill" style="--soc:${this._batterySoc(batterySoc)}%; --batt-color:${this._socColor(batterySoc)};"></div>
                     <div class="vnp-battery-text">
@@ -331,11 +344,12 @@
                   </div>
                 </div>
 
-                <div class="vnp-endurance" style="--x:50; --y:88;">
-                  <span>ENDURANCE</span>
-                  <strong>${this._enduranceText(batterySoc, homeW, batteryVoltage, batteryCurrent)}</strong>
+                <div class="vnp-home-node">
+                  ${this._homeSvg()}
+                  <div class="vnp-home-value">${this._formatPower(homeW)}</div>
+                  <div class="vnp-home-sub">${this._formatEnergy(todayLoad)}</div>
                 </div>
-              </div>
+              </section>
             </div>
 
             ${
@@ -346,6 +360,7 @@
                     ${this._detailBox("Batt Chg", this._formatEnergy(todayBattCharge), "↯")}
                     ${this._detailBox("Batt Dis.", this._formatEnergy(todayBattDischarge), "↯")}
                     ${this._detailBox("Grid Import", this._formatEnergy(gridImportEnergy), "⚡")}
+                    ${this._detailBox("Inv Temp", this._formatTemp(inverterTemp), "🌡")}
                     ${this._detailBox("Temp 1", this._formatTemp(batteryTemp1), "🌡")}
                     ${this._detailBox("Temp 2", this._formatTemp(batteryTemp2), "🌡")}
                     ${this._detailBox("MOS Temp", this._formatTemp(batteryMos), "🌡")}
@@ -384,15 +399,15 @@
           overflow: hidden;
           border-radius: var(--ha-card-border-radius, 18px);
           background:
-            radial-gradient(circle at 18% 0%, rgba(255, 213, 79, 0.18), transparent 32%),
-            radial-gradient(circle at 100% 30%, rgba(79, 195, 247, 0.14), transparent 30%),
+            radial-gradient(circle at 50% 0%, rgba(255, 213, 79, 0.12), transparent 32%),
+            radial-gradient(circle at 100% 30%, rgba(79, 195, 247, 0.10), transparent 30%),
             var(--vnp-card-bg);
           color: var(--vnp-text);
         }
 
         .vnp-card {
-          padding: 14px;
           box-sizing: border-box;
+          padding: 14px;
         }
 
         .vnp-topbar {
@@ -408,12 +423,12 @@
         }
 
         .vnp-title {
-          font-size: 18px;
-          line-height: 1.15;
-          font-weight: 800;
-          white-space: nowrap;
           overflow: hidden;
+          font-size: 18px;
+          font-weight: 800;
+          line-height: 1.15;
           text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
         .vnp-subtitle {
@@ -437,7 +452,7 @@
 
         .vnp-status-flow {
           color: #ffd54f;
-          box-shadow: 0 0 22px rgba(255, 213, 79, 0.22);
+          box-shadow: 0 0 22px rgba(255, 213, 79, 0.20);
         }
 
         .vnp-warning {
@@ -450,8 +465,7 @@
           line-height: 1.35;
         }
 
-        .vnp-kflow-stage {
-          position: relative;
+        .vnp-stage {
           overflow: hidden;
           border: 1px solid var(--vnp-border);
           border-radius: 18px;
@@ -460,21 +474,21 @@
             rgba(255, 255, 255, 0.03);
         }
 
-        .vnp-kflow-stage.vnp-sky-clear {
+        .vnp-stage.vnp-sky-clear {
           background:
-            radial-gradient(circle at 19% 8%, rgba(255, 213, 79, 0.25), transparent 28%),
+            radial-gradient(circle at 50% 8%, rgba(255, 213, 79, 0.18), transparent 28%),
             linear-gradient(180deg, rgba(30, 51, 72, 0.92), rgba(10, 15, 22, 0.52));
         }
 
-        .vnp-kflow-stage.vnp-sky-night {
+        .vnp-stage.vnp-sky-night {
           background:
-            radial-gradient(circle at 22% 10%, rgba(144, 202, 249, 0.16), transparent 28%),
+            radial-gradient(circle at 50% 8%, rgba(144, 202, 249, 0.14), transparent 28%),
             linear-gradient(180deg, rgba(9, 17, 32, 0.96), rgba(4, 7, 14, 0.68));
         }
 
         .vnp-sky {
           position: relative;
-          height: 122px;
+          height: 150px;
           border-bottom: 1px solid rgba(255, 255, 255, 0.09);
         }
 
@@ -489,14 +503,14 @@
         .vnp-sun-arc {
           fill: none;
           stroke: rgba(255, 213, 79, 0.62);
-          stroke-width: 0.9;
-          stroke-dasharray: 2.5 2.5;
+          stroke-width: 1.1;
+          stroke-dasharray: 3 3;
           vector-effect: non-scaling-stroke;
         }
 
         .vnp-horizon {
           stroke: rgba(255, 255, 255, 0.16);
-          stroke-width: 0.8;
+          stroke-width: 0.9;
           vector-effect: non-scaling-stroke;
         }
 
@@ -506,100 +520,67 @@
 
         .vnp-time {
           position: absolute;
-          bottom: 18px;
+          bottom: 14px;
           transform: translateX(-50%);
           color: var(--vnp-muted);
           font-size: 11px;
           font-weight: 700;
         }
 
-        .vnp-time-rise {
-          left: 8%;
-        }
-
-        .vnp-time-noon {
-          left: 50%;
-        }
-
-        .vnp-time-set {
-          left: 92%;
-        }
+        .vnp-time-rise { left: 8%; }
+        .vnp-time-noon { left: 50%; }
+        .vnp-time-set { left: 92%; }
 
         .vnp-sun-marker {
           position: absolute;
           left: calc(var(--sun-x) * 1%);
           top: calc(var(--sun-y) * 1%);
-          width: 58px;
-          height: 58px;
+          z-index: 7;
+          width: 52px;
+          height: 52px;
           transform: translate(-50%, -50%);
-          z-index: 6;
         }
 
-        .vnp-sun-rays {
+        .vnp-sun-glow {
           position: absolute;
-          inset: 4px;
+          inset: 3px;
           border-radius: 999px;
-          background: conic-gradient(
-            rgba(255, 213, 79, 0.95),
-            transparent 16deg,
-            rgba(255, 193, 7, 0.80) 32deg,
-            transparent 52deg,
-            rgba(255, 213, 79, 0.95) 84deg,
-            transparent 106deg,
-            rgba(255, 193, 7, 0.80) 135deg,
-            transparent 168deg,
-            rgba(255, 213, 79, 0.90) 210deg,
-            transparent 245deg,
-            rgba(255, 193, 7, 0.85) 292deg,
-            transparent 330deg
-          );
-          animation: vnpSpin 17s linear infinite;
-          opacity: 0.95;
+          background: radial-gradient(circle, rgba(255, 244, 179, 0.40), rgba(255, 213, 79, 0.13) 45%, transparent 72%);
+          box-shadow: 0 0 18px rgba(255, 213, 79, 0.22);
         }
 
         .vnp-sun-core {
           position: absolute;
           left: 50%;
           top: 50%;
-          width: 39px;
-          height: 39px;
+          width: 34px;
+          height: 34px;
           transform: translate(-50%, -50%);
           display: grid;
           place-items: center;
           border-radius: 999px;
-          background: rgba(255, 213, 79, 0.22);
-          box-shadow: 0 0 28px rgba(255, 213, 79, 0.58);
-          font-size: 28px;
+          background: rgba(255, 213, 79, 0.20);
+          box-shadow: 0 0 12px rgba(255, 213, 79, 0.30);
+          font-size: 24px;
         }
 
-        .vnp-moon .vnp-sun-rays {
-          opacity: 0.12;
-          animation-duration: 34s;
-          filter: grayscale(1);
+        .vnp-moon .vnp-sun-glow {
+          background: radial-gradient(circle, rgba(144, 202, 249, 0.24), transparent 72%);
+          box-shadow: 0 0 14px rgba(144, 202, 249, 0.18);
         }
 
         .vnp-moon .vnp-sun-core {
           background: rgba(144, 202, 249, 0.12);
-          box-shadow: 0 0 22px rgba(144, 202, 249, 0.35);
-        }
-
-        @keyframes vnpSpin {
-          from {
-            transform: rotate(0deg);
-          }
-
-          to {
-            transform: rotate(360deg);
-          }
+          box-shadow: 0 0 14px rgba(144, 202, 249, 0.24);
         }
 
         .vnp-cloud-layer {
           position: absolute;
           z-index: 8;
-          left: 7%;
-          top: 15%;
-          width: 38%;
-          height: 60%;
+          left: 28%;
+          top: 46%;
+          width: 44%;
+          height: 38%;
           opacity: 0;
           pointer-events: none;
           transition: opacity 0.35s ease;
@@ -611,12 +592,12 @@
 
         .vnp-cloud {
           position: absolute;
-          width: 40%;
+          width: 32%;
           height: 28%;
           border-radius: 999px;
-          background: rgba(236, 239, 241, 0.85);
-          box-shadow: 0 0 18px rgba(255, 255, 255, 0.22);
-          animation: vnpCloud 7s ease-in-out infinite alternate;
+          background: rgba(236, 239, 241, 0.84);
+          box-shadow: 0 0 12px rgba(255, 255, 255, 0.16);
+          animation: vnpCloud 9s ease-in-out infinite alternate;
         }
 
         .vnp-cloud::before,
@@ -640,98 +621,50 @@
           height: 135%;
         }
 
-        .vnp-cloud-a {
-          left: 10%;
-          top: 30%;
-        }
-
-        .vnp-cloud-b {
-          left: 45%;
-          top: 45%;
-          transform: scale(0.78);
-          animation-duration: 9s;
-        }
-
-        .vnp-cloud-c {
-          left: 64%;
-          top: 14%;
-          transform: scale(0.68);
-          opacity: 0.78;
-          animation-duration: 11s;
-        }
+        .vnp-cloud-a { left: 8%; top: 30%; }
+        .vnp-cloud-b { left: 40%; top: 44%; transform: scale(0.80); animation-duration: 11s; }
+        .vnp-cloud-c { left: 60%; top: 10%; transform: scale(0.68); opacity: 0.78; animation-duration: 13s; }
 
         @keyframes vnpCloud {
-          from {
-            margin-left: -3%;
-          }
-
-          to {
-            margin-left: 5%;
-          }
+          from { margin-left: -2%; }
+          to { margin-left: 4%; }
         }
 
         .vnp-snow-layer {
           position: absolute;
           z-index: 9;
-          left: 17%;
-          top: 20%;
-          width: 24%;
-          height: 80%;
+          left: 36%;
+          top: 50%;
+          width: 28%;
+          height: 44%;
           opacity: 0;
           pointer-events: none;
           transition: opacity 0.35s ease;
         }
 
-        .vnp-snow-layer.vnp-visible {
-          opacity: 1;
-        }
+        .vnp-snow-layer.vnp-visible { opacity: 1; }
 
         .vnp-snow-layer span {
           position: absolute;
           top: 0;
           color: rgba(225, 245, 254, 0.95);
-          animation: vnpSnow 3.3s linear infinite;
+          animation: vnpSnow 3.6s linear infinite;
         }
 
-        .vnp-snow-layer span:nth-child(1) {
-          left: 8%;
-          animation-delay: 0s;
-        }
-
-        .vnp-snow-layer span:nth-child(2) {
-          left: 34%;
-          animation-delay: 0.7s;
-        }
-
-        .vnp-snow-layer span:nth-child(3) {
-          left: 62%;
-          animation-delay: 1.4s;
-        }
-
-        .vnp-snow-layer span:nth-child(4) {
-          left: 88%;
-          animation-delay: 2.1s;
-        }
+        .vnp-snow-layer span:nth-child(1) { left: 8%; animation-delay: 0s; }
+        .vnp-snow-layer span:nth-child(2) { left: 34%; animation-delay: 0.7s; }
+        .vnp-snow-layer span:nth-child(3) { left: 62%; animation-delay: 1.4s; }
+        .vnp-snow-layer span:nth-child(4) { left: 88%; animation-delay: 2.1s; }
 
         @keyframes vnpSnow {
-          from {
-            transform: translateY(0) rotate(0deg);
-            opacity: 0;
-          }
-
-          20% {
-            opacity: 1;
-          }
-
-          to {
-            transform: translateY(72px) rotate(180deg);
-            opacity: 0;
-          }
+          from { transform: translateY(0) rotate(0deg); opacity: 0; }
+          20% { opacity: 1; }
+          to { transform: translateY(58px) rotate(180deg); opacity: 0; }
         }
 
-        .vnp-main {
+        .vnp-flow-area {
           position: relative;
-          min-height: 385px;
+          min-height: 470px;
         }
 
         .vnp-flow-svg {
@@ -746,18 +679,18 @@
         .vnp-flow {
           fill: none;
           stroke: rgba(255, 255, 255, 0.18);
-          stroke-width: calc(0.7px + (var(--power, 0.2) * 2.5px));
+          stroke-width: calc(0.8px + (var(--power, 0.2) * 2.2px));
           stroke-linecap: round;
           stroke-linejoin: round;
-          stroke-dasharray: 2.5 3.2;
-          opacity: 0.25;
+          stroke-dasharray: 3 4;
+          opacity: 0.24;
           vector-effect: non-scaling-stroke;
         }
 
         .vnp-flow.vnp-active {
           opacity: 0.96;
           filter: url(#vnpGlow);
-          animation: vnpFlow 1.1s linear infinite;
+          animation: vnpFlow var(--duration, 1.8s) linear infinite;
         }
 
         .vnp-flow.vnp-reverse {
@@ -768,130 +701,132 @@
           stroke-dasharray: none;
         }
 
-        .vnp-flow-sun {
-          stroke: var(--vnp-sun);
-        }
-
-        .vnp-flow-pv {
-          stroke: var(--vnp-pv);
-        }
-
-        .vnp-flow-home {
-          stroke: var(--vnp-home);
-        }
-
-        .vnp-flow-grid {
-          stroke: var(--vnp-grid);
-        }
-
-        .vnp-flow-export {
-          stroke: var(--vnp-export);
-        }
-
-        .vnp-flow-battery {
-          stroke: var(--vnp-battery);
-        }
+        .vnp-flow-sun { stroke: var(--vnp-sun); }
+        .vnp-flow-pv { stroke: var(--vnp-pv); }
+        .vnp-flow-home { stroke: var(--vnp-home); }
+        .vnp-flow-grid { stroke: var(--vnp-grid); }
+        .vnp-flow-export { stroke: var(--vnp-export); }
+        .vnp-flow-battery { stroke: var(--vnp-battery); }
 
         @keyframes vnpFlow {
-          from {
-            stroke-dashoffset: 0;
-          }
-
-          to {
-            stroke-dashoffset: -11.4;
-          }
+          from { stroke-dashoffset: 0; }
+          to { stroke-dashoffset: -14; }
         }
 
-        .vnp-node,
+        .vnp-pv-badge,
         .vnp-inverter,
-        .vnp-battery,
-        .vnp-endurance {
+        .vnp-grid-node,
+        .vnp-battery-node,
+        .vnp-home-node {
           position: absolute;
           z-index: 3;
-          left: calc(var(--x) * 1%);
-          top: calc(var(--y) * 1%);
-          transform: translate(-50%, -50%);
           box-sizing: border-box;
+          transform: translate(-50%, -50%);
         }
 
-        .vnp-node {
-          width: clamp(104px, 25%, 142px);
-          min-height: 92px;
-          border: 1px solid var(--vnp-border);
-          border-radius: 16px;
-          background: var(--vnp-panel);
-          backdrop-filter: blur(8px);
-          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-          padding: 10px;
+        .vnp-pv-badge {
+          left: 50%;
+          top: 20%;
+          width: clamp(108px, 23%, 148px);
+          border: 1px solid rgba(255, 213, 79, 0.32);
+          border-radius: 13px;
+          background: rgba(255, 179, 0, 0.10);
+          box-shadow: 0 0 18px rgba(255, 179, 0, 0.10);
+          padding: 8px 10px;
           text-align: center;
+          backdrop-filter: blur(7px);
         }
 
-        .vnp-node-label {
-          color: var(--vnp-muted);
-          font-size: 12px;
-          line-height: 1.2;
-          font-weight: 700;
-          text-transform: uppercase;
-          letter-spacing: 0.03em;
-        }
-
-        .vnp-node-main {
-          margin: 5px 0 8px;
-          font-size: 18px;
-          line-height: 1.05;
-          font-weight: 900;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-
-        .vnp-mini-row {
-          display: flex;
-          justify-content: space-between;
-          gap: 6px;
+        .vnp-pv-badge span,
+        .vnp-pv-badge small {
+          display: block;
           color: var(--vnp-muted);
           font-size: 11px;
-          line-height: 1.45;
+          font-weight: 800;
+          line-height: 1.2;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
-        .vnp-mini-row strong {
+        .vnp-pv-badge strong {
+          display: block;
+          margin: 3px 0;
           color: var(--vnp-text);
-          font-weight: 800;
+          font-size: 18px;
+          font-weight: 900;
+          line-height: 1.05;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
         .vnp-inverter {
-          width: clamp(112px, 26%, 148px);
-          min-height: 92px;
+          left: 50%;
+          top: 49%;
+          width: clamp(104px, 21%, 138px);
+          height: clamp(92px, 19%, 122px);
           display: grid;
           place-items: center;
-          border: 1px solid rgba(255, 213, 79, 0.34);
+          border: 1px solid rgba(255, 255, 255, 0.18);
           border-radius: 18px;
           background:
-            radial-gradient(circle at 50% 0%, rgba(255, 213, 79, 0.18), transparent 54%),
-            var(--vnp-panel-strong);
-          box-shadow: 0 0 26px rgba(255, 213, 79, 0.12);
+            radial-gradient(circle at 50% 0%, rgba(255, 213, 79, 0.12), transparent 58%),
+            rgba(255, 255, 255, 0.07);
+          box-shadow: 0 10px 26px rgba(0, 0, 0, 0.20);
+          backdrop-filter: blur(8px);
+        }
+
+        .vnp-inverter svg,
+        .vnp-grid-node svg,
+        .vnp-home-node svg {
+          display: block;
+          width: 100%;
+          height: auto;
+        }
+
+        .vnp-grid-node {
+          left: 18%;
+          top: 49%;
+          width: clamp(104px, 22%, 132px);
+          min-height: 148px;
+          border: 1px solid var(--vnp-border);
+          border-radius: 16px;
+          background: var(--vnp-panel);
+          padding: 8px;
           text-align: center;
-          padding: 10px;
+          backdrop-filter: blur(8px);
         }
 
-        .vnp-inverter-icon {
-          font-size: 28px;
-          line-height: 1;
+        .vnp-grid-node svg {
+          height: 78px;
+          margin: 0 auto 5px;
         }
 
-        .vnp-inverter-title {
-          color: var(--vnp-muted);
-          font-size: 12px;
-          font-weight: 800;
-        }
-
-        .vnp-inverter-value {
-          font-size: 15px;
+        .vnp-side-value {
+          overflow: hidden;
+          color: var(--vnp-text);
+          font-size: 16px;
           font-weight: 900;
+          line-height: 1.1;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
-        .vnp-battery {
-          width: clamp(104px, 24%, 136px);
+        .vnp-side-sub {
+          margin-top: 4px;
+          overflow: hidden;
+          color: var(--vnp-muted);
+          font-size: 11px;
+          font-weight: 700;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .vnp-battery-node {
+          left: 82%;
+          top: 49%;
+          width: clamp(106px, 22%, 136px);
         }
 
         .vnp-battery-head {
@@ -913,7 +848,7 @@
 
         .vnp-battery-shell {
           position: relative;
-          height: 164px;
+          height: 162px;
           overflow: hidden;
           border: 2px solid rgba(255, 255, 255, 0.25);
           border-radius: 18px;
@@ -939,10 +874,7 @@
           right: 0;
           bottom: 0;
           height: calc(var(--soc) * 1%);
-          background:
-            linear-gradient(180deg, rgba(255, 255, 255, 0.22), transparent),
-            var(--batt-color);
-          box-shadow: 0 0 18px color-mix(in srgb, var(--batt-color), transparent 45%);
+          background: linear-gradient(180deg, rgba(255, 255, 255, 0.22), transparent), var(--batt-color);
           transition: height 0.45s ease;
         }
 
@@ -963,30 +895,40 @@
         }
 
         .vnp-battery-text span {
-          font-size: 11px;
           color: rgba(255, 255, 255, 0.86);
+          font-size: 11px;
         }
 
-        .vnp-endurance {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 8px;
-          min-width: 164px;
+        .vnp-home-node {
+          left: 50%;
+          top: 84%;
+          width: clamp(128px, 28%, 172px);
           border: 1px solid var(--vnp-border);
-          border-radius: 999px;
-          background: rgba(255, 255, 255, 0.07);
-          padding: 8px 12px;
-          font-size: 12px;
+          border-radius: 18px;
+          background: var(--vnp-panel);
+          padding: 10px;
+          text-align: center;
+          backdrop-filter: blur(8px);
         }
 
-        .vnp-endurance span {
-          color: var(--vnp-muted);
-          font-weight: 800;
+        .vnp-home-node svg {
+          width: 72px;
+          height: 54px;
+          margin: 0 auto 6px;
         }
 
-        .vnp-endurance strong {
+        .vnp-home-value {
+          color: var(--vnp-text);
+          font-size: 18px;
           font-weight: 900;
+          line-height: 1.1;
+        }
+
+        .vnp-home-sub {
+          margin-top: 4px;
+          color: var(--vnp-muted);
+          font-size: 11px;
+          font-weight: 700;
         }
 
         .vnp-details {
@@ -1012,95 +954,58 @@
 
         .vnp-detail-label {
           display: block;
+          overflow: hidden;
           color: var(--vnp-muted);
           font-size: 11px;
           line-height: 1.2;
-          white-space: nowrap;
-          overflow: hidden;
           text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
         .vnp-detail-value {
           display: block;
+          overflow: hidden;
           margin-top: 3px;
           font-size: 13px;
-          line-height: 1.15;
           font-weight: 900;
-          white-space: nowrap;
-          overflow: hidden;
+          line-height: 1.15;
           text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
         @media (max-width: 620px) {
-          .vnp-card {
-            padding: 12px;
-          }
-
-          .vnp-subtitle {
-            display: none;
-          }
-
-          .vnp-sky {
-            height: 108px;
-          }
-
-          .vnp-main {
-            min-height: 420px;
-          }
-
-          .vnp-node {
-            width: 105px;
-            min-height: 86px;
-            padding: 8px;
-          }
-
-          .vnp-node-main {
-            font-size: 15px;
-          }
-
-          .vnp-inverter {
-            width: 110px;
-            min-height: 84px;
-          }
-
-          .vnp-battery {
-            width: 104px;
-          }
-
-          .vnp-battery-shell {
-            height: 142px;
-          }
-
-          .vnp-details {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-          }
+          .vnp-card { padding: 12px; }
+          .vnp-subtitle { display: none; }
+          .vnp-sky { height: 132px; }
+          .vnp-flow-area { min-height: 500px; }
+          .vnp-pv-badge { top: 18%; width: 116px; }
+          .vnp-inverter { top: 47%; width: 104px; height: 92px; }
+          .vnp-grid-node { left: 16%; top: 48%; width: 96px; min-height: 132px; padding: 7px; }
+          .vnp-grid-node svg { height: 66px; }
+          .vnp-battery-node { left: 84%; top: 48%; width: 96px; }
+          .vnp-battery-shell { height: 140px; }
+          .vnp-home-node { top: 84%; width: 136px; }
+          .vnp-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
 
         @media (max-width: 390px) {
-          .vnp-title {
-            font-size: 16px;
-          }
+          .vnp-title { font-size: 16px; }
+          .vnp-status { padding: 6px 9px; font-size: 11px; }
+          .vnp-flow-area { min-height: 510px; }
+          .vnp-grid-node { left: 15%; width: 88px; }
+          .vnp-battery-node { left: 85%; width: 88px; }
+          .vnp-inverter { width: 96px; height: 86px; }
+          .vnp-pv-badge { width: 108px; }
+          .vnp-side-value,
+          .vnp-home-value { font-size: 15px; }
+          .vnp-battery-text strong { font-size: 15px; }
+        }
 
-          .vnp-status {
-            padding: 6px 9px;
-            font-size: 11px;
-          }
-
-          .vnp-main {
-            min-height: 430px;
-          }
-
-          .vnp-node {
-            width: 96px;
-          }
-
-          .vnp-battery {
-            width: 96px;
-          }
-
-          .vnp-endurance {
-            min-width: 138px;
-            font-size: 11px;
+        @media (prefers-reduced-motion: reduce) {
+          .vnp-flow.vnp-active,
+          .vnp-cloud,
+          .vnp-snow-layer span {
+            animation: none;
           }
         }
       `;
@@ -1212,6 +1117,7 @@
       const state = this._readState(entityId);
       const attrs = this._hass?.states?.[entityId]?.attributes || {};
       const elevation = this._readAttributeNumber(entityId, "elevation");
+      const nextNoon = attrs.next_noon;
 
       const fmt = (iso, fallback) => {
         try {
@@ -1224,40 +1130,38 @@
         }
       };
 
+      const riseDate = this._dateFromAttr(attrs.next_rising);
+      const setDate = this._dateFromAttr(attrs.next_setting);
+      const noonElevation = this._estimateNoonElevation(entityId, nextNoon);
+      const noonY = this._clamp(88 - noonElevation * 1.15, 14, 56);
+
       const rise = fmt(attrs.next_rising, "06:00");
       const set = fmt(attrs.next_setting, "18:00");
 
       const now = new Date();
-      const minutes = now.getHours() * 60 + now.getMinutes();
-
-      const fallbackRise = 6 * 60;
-      const fallbackSet = 18 * 60;
-      const daylight = fallbackSet - fallbackRise;
-
-      let progress = (minutes - fallbackRise) / daylight;
-      progress = this._clamp(progress, 0, 1);
-
       const above = state === "above_horizon";
       const night = state === "below_horizon" || !above;
 
-      let x;
-      let y;
+      let x = 50;
+      let y = 86;
 
-      if (night) {
-        const nightProgress = minutes > fallbackSet
-          ? (minutes - fallbackSet) / (1440 - daylight)
-          : (minutes + 1440 - fallbackSet) / (1440 - daylight);
-
-        const t = this._clamp(nightProgress, 0, 1);
-        x = 92 - 84 * t;
-        y = 30 - 13 * Math.sin(t * Math.PI);
-      } else {
+      if (!night && riseDate && setDate && setDate > riseDate) {
+        const progress = this._clamp((now.getTime() - riseDate.getTime()) / (setDate.getTime() - riseDate.getTime()), 0, 1);
         x = 8 + 84 * progress;
-        y = 27 - 23 * Math.sin(progress * Math.PI);
+        y = 86 - (86 - noonY) * Math.sin(progress * Math.PI);
 
         if (Number.isFinite(elevation)) {
-          y = this._clamp(28 - elevation * 0.62, 5, 28);
+          y = this._clamp(86 - elevation * 1.15, 12, 86);
         }
+      } else if (night) {
+        const minutes = now.getHours() * 60 + now.getMinutes();
+        const t = minutes >= 18 * 60
+          ? (minutes - 18 * 60) / (12 * 60)
+          : (minutes + 6 * 60) / (12 * 60);
+
+        const progress = this._clamp(t, 0, 1);
+        x = 92 - 84 * progress;
+        y = 90 - 18 * Math.sin(progress * Math.PI);
       }
 
       return {
@@ -1265,8 +1169,62 @@
         set,
         x: Math.round(x * 10) / 10,
         y: Math.round(y * 10) / 10,
+        noonY: Math.round(noonY * 10) / 10,
         night,
       };
+    }
+
+    _dateFromAttr(value) {
+      try {
+        if (!value) return null;
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date;
+      } catch (error) {
+        return null;
+      }
+    }
+
+    _estimateNoonElevation(entityId, nextNoon) {
+      const currentElevation = this._readAttributeNumber(entityId, "elevation");
+
+      try {
+        const noonDate = nextNoon ? new Date(nextNoon) : new Date();
+        if (Number.isNaN(noonDate.getTime())) {
+          return Number.isFinite(currentElevation) ? Math.max(currentElevation, 25) : 45;
+        }
+
+        const day = this._dayOfYear(noonDate);
+        const latitude = this._hass?.config?.latitude;
+
+        if (!Number.isFinite(latitude)) {
+          return Number.isFinite(currentElevation) ? Math.max(currentElevation, 25) : 45;
+        }
+
+        const declination = -23.44 * Math.cos((2 * Math.PI * (day + 10)) / 365);
+        const noonElevation = 90 - Math.abs(latitude - declination);
+
+        return this._clamp(noonElevation, 5, 75);
+      } catch (error) {
+        return Number.isFinite(currentElevation) ? Math.max(currentElevation, 25) : 45;
+      }
+    }
+
+    _sunArcPath(noonY) {
+      const y = this._clamp(this._number(noonY, 32), 14, 58);
+      return `M8 86 C25 ${y} 75 ${y} 92 86`;
+    }
+
+    _dayOfYear(date) {
+      const start = new Date(date.getFullYear(), 0, 0);
+      const diff = date - start + (start.getTimezoneOffset() - date.getTimezoneOffset()) * 60 * 1000;
+      return Math.floor(diff / (1000 * 60 * 60 * 24));
+    }
+
+    _pvSubText(pv1W, pv2W, config) {
+      const parts = [];
+      if (config.pv1_power) parts.push(`PV1 ${this._formatPower(pv1W)}`);
+      if (config.pv2_power) parts.push(`PV2 ${this._formatPower(pv2W)}`);
+      return parts.length ? parts.join(" / ") : "Solar input";
     }
 
     _flowClass(active) {
@@ -1274,7 +1232,12 @@
     }
 
     _flowStrength(value, maxPower) {
-      return this._clamp(Math.abs(value) / maxPower, 0.14, 1).toFixed(3);
+      return this._clamp(Math.abs(value) / maxPower, 0.18, 1).toFixed(3);
+    }
+
+    _flowDuration(value, maxPower) {
+      const strength = this._clamp(Math.abs(value) / maxPower, 0, 1);
+      return (2.6 - strength * 1.5).toFixed(2);
     }
 
     _readPower(entityId) {
@@ -1348,11 +1311,6 @@
       return `${Math.round(abs)} W`;
     }
 
-    _formatPowerOrDash(value, configuredEntity) {
-      if (!configuredEntity) return "-- W";
-      return this._formatPower(value);
-    }
-
     _formatSignedPower(value) {
       if (!Number.isFinite(value)) return "--";
       if (Math.abs(value) < 0.5) return "0 W";
@@ -1391,29 +1349,8 @@
       if (!Number.isFinite(value)) return "#607d8b";
       if (value <= 20) return "#ff3d00";
       if (value <= 40) return "#f4d03f";
-      if (value <= 75) return "#44ff00";
-      return "#00d4ff";
-    }
-
-    _enduranceText(soc, homeW, voltage, current) {
-      if (!Number.isFinite(soc)) return "-- remaining";
-
-      if (Number.isFinite(voltage) && Number.isFinite(current) && homeW > 50) {
-        const batteryPowerApprox = Math.abs(voltage * current);
-        if (batteryPowerApprox > 50) {
-          const hours = batteryPowerApprox / homeW;
-          return `${this._formatDuration(hours)} remaining`;
-        }
-      }
-
-      return `${Math.round(soc)}% remaining`;
-    }
-
-    _formatDuration(hours) {
-      if (!Number.isFinite(hours) || hours <= 0) return "--";
-      const h = Math.floor(hours);
-      const m = Math.round((hours - h) * 60);
-      return `${h}h ${String(m).padStart(2, "0")}m`;
+      if (value <= 75) return "#44d66a";
+      return "#00bcd4";
     }
 
     _number(value, fallback) {
@@ -1445,6 +1382,62 @@
 
     _escapeAttr(value) {
       return this._escape(value).replace(/[^a-zA-Z0-9_-]/g, "_");
+    }
+
+    _inverterSvg() {
+      return `
+        <svg viewBox="0 0 120 104" role="img" aria-label="Inverter">
+          <defs>
+            <linearGradient id="vnpInvBody" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0" stop-color="rgba(255,255,255,0.92)"></stop>
+              <stop offset="1" stop-color="rgba(186,196,205,0.78)"></stop>
+            </linearGradient>
+            <linearGradient id="vnpInvScreen" x1="0" x2="1" y1="0" y2="1">
+              <stop offset="0" stop-color="rgba(58,90,116,0.95)"></stop>
+              <stop offset="1" stop-color="rgba(18,36,52,0.95)"></stop>
+            </linearGradient>
+          </defs>
+          <rect x="24" y="12" width="72" height="80" rx="10" fill="url(#vnpInvBody)" stroke="rgba(255,255,255,0.55)" stroke-width="2"></rect>
+          <rect x="35" y="24" width="50" height="24" rx="5" fill="url(#vnpInvScreen)"></rect>
+          <path d="M42 37 C49 28 55 45 62 36 C68 28 73 39 80 31" fill="none" stroke="rgba(255,213,79,0.95)" stroke-width="3" stroke-linecap="round"></path>
+          <circle cx="44" cy="66" r="4" fill="rgba(50,70,84,0.85)"></circle>
+          <circle cx="60" cy="66" r="4" fill="rgba(50,70,84,0.85)"></circle>
+          <circle cx="76" cy="66" r="4" fill="rgba(50,70,84,0.85)"></circle>
+          <line x1="45" y1="82" x2="75" y2="82" stroke="rgba(50,70,84,0.65)" stroke-width="4" stroke-linecap="round"></line>
+        </svg>
+      `;
+    }
+
+    _pylonSvg() {
+      return `
+        <svg viewBox="0 0 120 90" role="img" aria-label="Grid pylon">
+          <g fill="none" stroke="rgba(220,226,234,0.90)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M32 82 L48 16 L64 82"></path>
+            <path d="M40 48 H56"></path>
+            <path d="M37 62 H59"></path>
+            <path d="M48 16 L30 31 H66 Z"></path>
+            <path d="M40 48 L59 62"></path>
+            <path d="M56 48 L37 62"></path>
+            <path d="M80 82 L91 34 L102 82"></path>
+            <path d="M85 56 H97"></path>
+            <path d="M91 34 L78 45 H104 Z"></path>
+            <path d="M6 31 C24 26 42 26 60 31 C78 36 96 36 114 31"></path>
+          </g>
+        </svg>
+      `;
+    }
+
+    _homeSvg() {
+      return `
+        <svg viewBox="0 0 120 82" role="img" aria-label="Home consumption">
+          <g fill="none" stroke="rgba(220,226,234,0.90)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 43 L60 12 L102 43"></path>
+            <path d="M30 40 V70 H90 V40"></path>
+            <path d="M52 70 V52 H68 V70"></path>
+            <path d="M74 29 H90 V41"></path>
+          </g>
+        </svg>
+      `;
     }
   }
 
