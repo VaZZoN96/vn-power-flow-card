@@ -4,7 +4,7 @@
  */
 
 (() => {
-  const CARD_VERSION = "0.9.2";
+  const CARD_VERSION = "0.9.3";
   const CARD_TAG = "vn-power-flow-card";
   const EDITOR_TAG = "vn-power-flow-card-editor";
 
@@ -45,6 +45,7 @@
       this._rendered = false;
       this._lastSunArcPath = "";
       this._lastSkyConnectorPath = "";
+      this._uid = Math.random().toString(36).slice(2, 8);
     }
 
     static getStubConfig() {
@@ -1235,7 +1236,7 @@
         snow: "snow",
         snowy: "snow",
         snow_or_blocked: "snow_or_blocked",
-        blocked: "blocked",
+        blocked: "snow_or_blocked",
         low_sun: "low_sun",
         night: "night",
       };
@@ -1602,34 +1603,35 @@
     }
 
     _inverterSvg() {
+      const uid = this._uid;
       return `
         <svg viewBox="0 0 200 145" role="img" aria-label="Inverter">
           <defs>
-            <linearGradient id="vnpInvFront" x1="0" x2="0" y1="0" y2="1">
+            <linearGradient id="vnpInvFront_${uid}" x1="0" x2="0" y1="0" y2="1">
               <stop offset="0" stop-color="#eef4ef"></stop>
               <stop offset="1" stop-color="#ced8d2"></stop>
             </linearGradient>
-            <linearGradient id="vnpInvSide" x1="0" x2="1" y1="0" y2="1">
+            <linearGradient id="vnpInvSide_${uid}" x1="0" x2="1" y1="0" y2="1">
               <stop offset="0" stop-color="#3c4548"></stop>
               <stop offset="1" stop-color="#1f2528"></stop>
             </linearGradient>
-            <linearGradient id="vnpInvPanel" x1="0" x2="1" y1="0" y2="1">
+            <linearGradient id="vnpInvPanel_${uid}" x1="0" x2="1" y1="0" y2="1">
               <stop offset="0" stop-color="#2a2d31"></stop>
               <stop offset="1" stop-color="#101215"></stop>
             </linearGradient>
           </defs>
 
           <g filter="drop-shadow(0 12px 14px rgba(0,0,0,.32))">
-            <path d="M45 17 L151 11 L176 32 L176 116 L70 127 L45 104 Z" fill="url(#vnpInvSide)"></path>
-            <path d="M24 24 Q24 15 33 15 L145 15 Q154 15 154 24 L154 108 Q154 117 145 117 L33 117 Q24 117 24 108 Z" fill="url(#vnpInvFront)" stroke="rgba(255,255,255,.82)" stroke-width="2"></path>
-            <path d="M154 24 L176 41 L176 116 L154 108 Z" fill="url(#vnpInvSide)"></path>
+            <path d="M45 17 L151 11 L176 32 L176 116 L70 127 L45 104 Z" fill="url(#vnpInvSide_${uid})"></path>
+            <path d="M24 24 Q24 15 33 15 L145 15 Q154 15 154 24 L154 108 Q154 117 145 117 L33 117 Q24 117 24 108 Z" fill="url(#vnpInvFront_${uid})" stroke="rgba(255,255,255,.82)" stroke-width="2"></path>
+            <path d="M154 24 L176 41 L176 116 L154 108 Z" fill="url(#vnpInvSide_${uid})"></path>
 
             <circle cx="39" cy="30" r="3" fill="#aeb8b5" stroke="#7c8584" stroke-width="1.3"></circle>
             <circle cx="139" cy="28" r="3" fill="#aeb8b5" stroke="#7c8584" stroke-width="1.3"></circle>
             <circle cx="39" cy="101" r="3" fill="#aeb8b5" stroke="#7c8584" stroke-width="1.3"></circle>
             <circle cx="139" cy="101" r="3" fill="#aeb8b5" stroke="#7c8584" stroke-width="1.3"></circle>
 
-            <rect x="50" y="68" width="88" height="39" rx="7" fill="url(#vnpInvPanel)" stroke="rgba(255,255,255,.78)" stroke-width="1.7"></rect>
+            <rect x="50" y="68" width="88" height="39" rx="7" fill="url(#vnpInvPanel_${uid})" stroke="rgba(255,255,255,.78)" stroke-width="1.7"></rect>
             <rect x="50" y="68" width="88" height="8" rx="7" fill="#72c936"></rect>
             <rect x="70" y="81" width="36" height="18" rx="2" fill="rgba(134,145,144,.48)"></rect>
 
@@ -1653,16 +1655,19 @@
       const fillH = shellH * (level / 100);
       const fillY = shellY + shellH - fillH;
       const color = this._socColor(soc);
+      const uid = this._uid;
 
       return `
         <svg viewBox="0 0 120 120" role="img" aria-label="Battery">
+          <defs>
+            <clipPath id="vnpBattClip_${uid}">
+              <rect x="39" y="29" width="42" height="68" rx="7"></rect>
+            </clipPath>
+          </defs>
           <g filter="drop-shadow(0 10px 12px rgba(0,0,0,.24))">
             <rect x="45" y="11" width="30" height="12" rx="4" fill="rgba(255,255,255,.48)"></rect>
             <rect x="33" y="23" width="54" height="80" rx="12" fill="rgba(0,0,0,.24)" stroke="rgba(240,240,240,.85)" stroke-width="4"></rect>
-            <clipPath id="vnpBattClip">
-              <rect x="39" y="29" width="42" height="68" rx="7"></rect>
-            </clipPath>
-            <g clip-path="url(#vnpBattClip)">
+            <g clip-path="url(#vnpBattClip_${uid})">
               <rect x="39" y="${fillY}" width="42" height="${fillH}" fill="${color}"></rect>
               <path d="M39 44 H81 M39 60 H81 M39 76 H81" stroke="rgba(255,255,255,.20)" stroke-width="2"></path>
             </g>
@@ -1700,22 +1705,23 @@
     }
 
     _homeSvg() {
+      const uid = this._uid;
       return `
         <svg viewBox="0 0 150 108" role="img" aria-label="Home">
           <defs>
-            <linearGradient id="vnpHomeWall" x1="0" x2="0" y1="0" y2="1">
+            <linearGradient id="vnpHomeWall_${uid}" x1="0" x2="0" y1="0" y2="1">
               <stop offset="0" stop-color="rgba(244,248,250,.96)"></stop>
               <stop offset="1" stop-color="rgba(177,193,205,.84)"></stop>
             </linearGradient>
-            <linearGradient id="vnpHomeRoof" x1="0" x2="1" y1="0" y2="1">
+            <linearGradient id="vnpHomeRoof_${uid}" x1="0" x2="1" y1="0" y2="1">
               <stop offset="0" stop-color="rgba(79,195,247,.95)"></stop>
               <stop offset="1" stop-color="rgba(32,92,128,.95)"></stop>
             </linearGradient>
           </defs>
 
           <g filter="drop-shadow(0 8px 10px rgba(0,0,0,.24))">
-            <path d="M22 53 L75 15 L128 53 L118 64 L75 32 L32 64 Z" fill="url(#vnpHomeRoof)" stroke="rgba(255,255,255,.56)" stroke-width="2"></path>
-            <path d="M38 57 H112 V92 H38 Z" fill="url(#vnpHomeWall)" stroke="rgba(255,255,255,.58)" stroke-width="2"></path>
+            <path d="M22 53 L75 15 L128 53 L118 64 L75 32 L32 64 Z" fill="url(#vnpHomeRoof_${uid})" stroke="rgba(255,255,255,.56)" stroke-width="2"></path>
+            <path d="M38 57 H112 V92 H38 Z" fill="url(#vnpHomeWall_${uid})" stroke="rgba(255,255,255,.58)" stroke-width="2"></path>
             <rect x="98" y="29" width="12" height="21" rx="2" fill="rgba(45,67,80,.86)"></rect>
             <path d="M96 29 H112" stroke="rgba(255,255,255,.50)" stroke-width="3" stroke-linecap="round"></path>
             <rect x="66" y="70" width="18" height="22" rx="2" fill="rgba(54,72,84,.78)"></rect>
@@ -1750,80 +1756,232 @@
           this.innerHTML = `
             <style>
               .vnp-editor {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+                padding: 4px 0 8px;
+                font-family: var(--primary-font-family, inherit);
+              }
+
+              .vnp-group {
+                border: 1px solid var(--divider-color, rgba(255,255,255,.12));
+                border-radius: 12px;
+                overflow: hidden;
+              }
+
+              .vnp-group-header {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 9px 14px;
+                background: var(--secondary-background-color, rgba(255,255,255,.05));
+                cursor: pointer;
+                user-select: none;
+                font-size: 12px;
+                font-weight: 600;
+                letter-spacing: .04em;
+                text-transform: uppercase;
+                color: var(--secondary-text-color, #9aa7b2);
+              }
+
+              .vnp-group-header:hover {
+                background: var(--secondary-background-color, rgba(255,255,255,.09));
+              }
+
+              .vnp-group-header .vnp-group-icon {
+                font-size: 15px;
+                line-height: 1;
+              }
+
+              .vnp-group-header .vnp-chevron {
+                margin-left: auto;
+                transition: transform .2s ease;
+                font-size: 11px;
+                opacity: .6;
+              }
+
+              .vnp-group.vnp-open .vnp-chevron {
+                transform: rotate(180deg);
+              }
+
+              .vnp-group-body {
+                display: none;
+                flex-direction: column;
+                gap: 0;
+                padding: 10px 14px 12px;
+              }
+
+              .vnp-group.vnp-open .vnp-group-body {
+                display: flex;
+              }
+
+              .vnp-row {
                 display: grid;
-                gap: 12px;
-                padding: 8px 0;
+                grid-template-columns: 1fr 1fr;
+                gap: 10px;
               }
 
               .vnp-editor label {
-                display: grid;
+                display: flex;
+                flex-direction: column;
                 gap: 4px;
                 font-size: 12px;
-                color: var(--secondary-text-color);
+                color: var(--secondary-text-color, #9aa7b2);
+                margin-bottom: 8px;
+              }
+
+              .vnp-editor label span {
+                font-size: 11px;
+                font-weight: 500;
+                letter-spacing: .02em;
               }
 
               .vnp-editor input,
               .vnp-editor select {
                 box-sizing: border-box;
                 width: 100%;
-                padding: 8px;
+                padding: 7px 10px;
                 border-radius: 8px;
-                border: 1px solid var(--divider-color, #555);
-                background: var(--card-background-color, #111);
+                border: 1px solid var(--divider-color, rgba(255,255,255,.18));
+                background: var(--card-background-color, rgba(0,0,0,.2));
                 color: var(--primary-text-color, #fff);
+                font-size: 13px;
+                transition: border-color .15s;
+                outline: none;
+              }
+
+              .vnp-editor input:focus,
+              .vnp-editor select:focus {
+                border-color: var(--primary-color, #ffb300);
+              }
+
+              .vnp-hint {
+                font-size: 11px;
+                color: var(--secondary-text-color, #9aa7b2);
+                opacity: .7;
+                margin: -4px 0 6px;
+                line-height: 1.4;
+              }
+
+              .vnp-divider {
+                border: none;
+                border-top: 1px solid var(--divider-color, rgba(255,255,255,.08));
+                margin: 4px 0 10px;
               }
             </style>
 
             <div class="vnp-editor">
-              ${this._field("pv_power", "PV total power", c.pv_power || "")}
-              ${this._field("pv1_power", "PV string 1", c.pv1_power || "")}
-              ${this._field("pv2_power", "PV string 2", c.pv2_power || "")}
-              ${this._field("home_power", "Home power", c.home_power || "")}
-              ${this._field("grid_power", "Grid power", c.grid_power || "")}
-              ${this._field("battery_power", "Battery power", c.battery_power || "")}
-              ${this._field("battery_soc", "Battery SOC", c.battery_soc || "")}
 
-              <label>
-                Grid positive value means
-                <select data-key="grid_positive_direction">
-                  <option value="import" ${this._selected(c.grid_positive_direction, "import")}>Import</option>
-                  <option value="export" ${this._selected(c.grid_positive_direction, "export")}>Export</option>
-                </select>
-              </label>
+              ${this._group("solar", "☀️", "Solar & PV", true, `
+                <div class="vnp-row">
+                  ${this._field("pv_power", "PV total power", c.pv_power || "")}
+                  ${this._field("pv_sky_state", "Sky state entity", c.pv_sky_state || "")}
+                </div>
+                <div class="vnp-row">
+                  ${this._field("pv1_power", "PV string 1 (optional)", c.pv1_power || "")}
+                  ${this._field("pv2_power", "PV string 2 (optional)", c.pv2_power || "")}
+                </div>
+                <div class="vnp-row">
+                  ${this._field("today_pv", "Today PV energy (kWh)", c.today_pv || "")}
+                  ${this._field("sun_entity", "Sun entity", c.sun_entity || "sun.sun")}
+                </div>
+              `)}
 
-              <label>
-                Battery positive value means
-                <select data-key="battery_positive_direction">
-                  <option value="discharge" ${this._selected(c.battery_positive_direction, "discharge")}>Discharge</option>
-                  <option value="charge" ${this._selected(c.battery_positive_direction, "charge")}>Charge</option>
-                </select>
-              </label>
+              ${this._group("home", "🏠", "Home & Grid", true, `
+                <div class="vnp-row">
+                  ${this._field("home_power", "Home power", c.home_power || "")}
+                  ${this._field("today_load", "Today load energy (kWh)", c.today_load || "")}
+                </div>
+                <div class="vnp-row">
+                  ${this._field("grid_power", "Grid power", c.grid_power || "")}
+                  ${this._fieldSelect("grid_positive_direction", "Grid positive = ", c.grid_positive_direction, [
+                    ["import", "Import (grid → home)"],
+                    ["export", "Export (home → grid)"],
+                  ])}
+                </div>
+                <div class="vnp-row">
+                  ${this._field("grid_import_energy", "Grid import energy (kWh)", c.grid_import_energy || "")}
+                  ${this._field("grid_export_energy", "Grid export energy (kWh)", c.grid_export_energy || "")}
+                </div>
+              `)}
 
-              <label>
-                Cloud mode
-                <select data-key="cloud_mode">
-                  <option value="entity" ${this._selected(c.cloud_mode, "entity")}>Entity</option>
-                  <option value="auto" ${this._selected(c.cloud_mode, "auto")}>Auto</option>
-                  <option value="off" ${this._selected(c.cloud_mode, "off")}>Off</option>
-                </select>
-              </label>
+              ${this._group("battery", "🔋", "Battery", false, `
+                <div class="vnp-row">
+                  ${this._field("battery_power", "Battery power", c.battery_power || "")}
+                  ${this._fieldSelect("battery_positive_direction", "Battery positive = ", c.battery_positive_direction, [
+                    ["discharge", "Discharge"],
+                    ["charge", "Charge"],
+                  ])}
+                </div>
+                <div class="vnp-row">
+                  ${this._field("battery_soc", "Battery SOC (%)", c.battery_soc || "")}
+                  ${this._field("battery_voltage", "Battery voltage (V)", c.battery_voltage || "")}
+                </div>
+                <div class="vnp-row">
+                  ${this._field("battery_current", "Battery current (A)", c.battery_current || "")}
+                  ${this._field("battery_temp1", "Battery temp 1", c.battery_temp1 || "")}
+                </div>
+                <div class="vnp-row">
+                  ${this._field("battery_temp2", "Battery temp 2", c.battery_temp2 || "")}
+                  ${this._field("today_batt_chg", "Today charge (kWh)", c.today_batt_chg || "")}
+                </div>
+                <div class="vnp-row">
+                  ${this._field("batt_dis", "Today discharge (kWh)", c.batt_dis || "")}
+                  <div></div>
+                </div>
+              `)}
 
-              <label>
-                Sky state override
-                <select data-key="sky_state_override">
-                  <option value="off" ${this._selected(c.sky_state_override, "off")}>Off</option>
-                  <option value="clear" ${this._selected(c.sky_state_override, "clear")}>Clear</option>
-                  <option value="partly_cloudy" ${this._selected(c.sky_state_override, "partly_cloudy")}>Partly cloudy</option>
-                  <option value="cloudy" ${this._selected(c.sky_state_override, "cloudy")}>Cloudy</option>
-                  <option value="overcast" ${this._selected(c.sky_state_override, "overcast")}>Overcast</option>
-                  <option value="rainy" ${this._selected(c.sky_state_override, "rainy")}>Rainy</option>
-                  <option value="snow" ${this._selected(c.sky_state_override, "snow")}>Snow</option>
-                  <option value="snow_or_blocked" ${this._selected(c.sky_state_override, "snow_or_blocked")}>Snow / blocked</option>
-                </select>
-              </label>
+              ${this._group("inverter", "⚡", "Inverter", false, `
+                <div class="vnp-row">
+                  ${this._field("inv_temp", "Inverter temperature", c.inv_temp || "")}
+                  <div></div>
+                </div>
+              `)}
 
-              ${this._field("pv_sky_state", "PV sky state", c.pv_sky_state || "")}
-              ${this._field("sun_entity", "Sun entity", c.sun_entity || "sun.sun")}
+              ${this._group("sky", "🌤️", "Sky & Clouds", false, `
+                <div class="vnp-row">
+                  ${this._fieldSelect("cloud_mode", "Cloud mode", c.cloud_mode, [
+                    ["entity", "Entity (use sky state sensor)"],
+                    ["auto", "Auto (weather / coverage)"],
+                    ["off", "Off"],
+                  ])}
+                  ${this._fieldSelect("sky_state_override", "Sky state override", c.sky_state_override, [
+                    ["off", "Off (automatic)"],
+                    ["clear", "☀ Clear"],
+                    ["partly_cloudy", "⛅ Partly cloudy"],
+                    ["cloudy", "☁ Cloudy"],
+                    ["overcast", "🌫 Overcast"],
+                    ["rainy", "🌧 Rainy"],
+                    ["snow", "❄ Snow"],
+                    ["snow_or_blocked", "🌨 Snow / blocked"],
+                  ])}
+                </div>
+                <div class="vnp-row">
+                  ${this._fieldSelect("show_clouds", "Show clouds animation", c.show_clouds, [
+                    ["true", "Yes"],
+                    ["false", "No"],
+                  ])}
+                  ${this._fieldSelect("show_snow", "Show snow animation", c.show_snow, [
+                    ["true", "Yes"],
+                    ["false", "No"],
+                  ])}
+                </div>
+              `)}
+
+              ${this._group("display", "🎛️", "Display options", false, `
+                <div class="vnp-row">
+                  ${this._field("max_power_w", "Max power (W)", c.max_power_w || "10000")}
+                  ${this._field("threshold_w", "Flow threshold (W)", c.threshold_w || "30")}
+                </div>
+                <div class="vnp-row">
+                  ${this._fieldSelect("show_details", "Show details bar", c.show_details, [
+                    ["true", "Yes"],
+                    ["false", "No"],
+                  ])}
+                  <div></div>
+                </div>
+              `)}
+
             </div>
           `;
 
@@ -1832,12 +1990,45 @@
               this._valueChanged(el.dataset.key, el.value);
             });
           });
+
+          this.querySelectorAll(".vnp-group-header").forEach((header) => {
+            header.addEventListener("click", () => {
+              header.closest(".vnp-group").classList.toggle("vnp-open");
+            });
+          });
+        }
+
+        _group(id, icon, label, openByDefault, content) {
+          return `
+            <div class="vnp-group ${openByDefault ? "vnp-open" : ""}">
+              <div class="vnp-group-header">
+                <span class="vnp-group-icon">${icon}</span>
+                ${label}
+                <span class="vnp-chevron">▼</span>
+              </div>
+              <div class="vnp-group-body">
+                ${content}
+              </div>
+            </div>
+          `;
+        }
+
+        _fieldSelect(key, label, value, options) {
+          const opts = options.map(([val, text]) =>
+            `<option value="${val}" ${this._selected(value, val)}>${text}</option>`
+          ).join("");
+          return `
+            <label>
+              <span>${label}</span>
+              <select data-key="${key}">${opts}</select>
+            </label>
+          `;
         }
 
         _field(key, label, value) {
           return `
             <label>
-              ${label}
+              <span>${label}</span>
               <input data-key="${key}" value="${this._escapeAttrValue(value)}">
             </label>
           `;
