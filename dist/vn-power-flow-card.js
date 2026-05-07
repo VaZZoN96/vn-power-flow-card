@@ -1008,10 +1008,57 @@
       return String(value ?? "").replace(/[^a-zA-Z0-9_-]/g, "_");
     }
 
-    _pvPanelsSvg(skyState = "clear") {
+        _pvPanelsSvg(skyState = "clear") {
       const uid = this._uid;
       const state = this._normalizeSkyState(skyState);
-      const shadeOpacity = state === "night" ? "0.70" : state === "overcast" || state === "rainy" || SNOW_STATES.has(state) ? "0.42" : state === "cloudy" ? "0.28" : state === "partly_cloudy" ? "0.16" : "0";
+
+      const isBlocked = state === "snow_or_blocked" || state === "blocked";
+      const hasSnow = SNOW_STATES.has(state);
+
+      const shadeOpacity =
+        state === "night"
+          ? "0.70"
+          : isBlocked
+            ? "0.48"
+            : state === "overcast" || state === "rainy" || hasSnow
+              ? "0.42"
+              : state === "cloudy"
+                ? "0.28"
+                : state === "partly_cloudy"
+                  ? "0.16"
+                  : "0";
+
+      const snowOverlay = isBlocked
+        ? `
+          <g aria-label="Snow blocked panels">
+            <path d="M13 13 H83 L78 29 C69 32 60 27 51 30 C41 33 31 29 21 32 L14 32 Z"
+              fill="rgba(238,248,255,.96)"></path>
+            <path d="M15 18 C25 15 33 20 42 17 C52 14 60 20 70 17 C76 15 80 16 82 17 L79 27 C71 30 62 25 53 28 C43 31 34 27 24 30 C20 31 17 31 14 31 Z"
+              fill="rgba(255,255,255,.88)"></path>
+            <path d="M20 34 C30 31 39 35 48 32 C57 29 67 34 76 31"
+              fill="none"
+              stroke="rgba(255,255,255,.86)"
+              stroke-width="3"
+              stroke-linecap="round"></path>
+            <text x="48" y="26"
+              text-anchor="middle"
+              font-size="8"
+              font-weight="900"
+              fill="rgba(20,35,48,.72)">BLOCKED</text>
+          </g>
+        `
+        : hasSnow
+          ? `
+            <g aria-label="Snow on panels">
+              <path d="M16 13 H40 C45 13 47 17 43 20 C35 24 25 19 17 22 Z"
+                fill="rgba(238,248,255,.90)"></path>
+              <path d="M55 14 H82 L79 23 C70 25 63 20 54 23 Z"
+                fill="rgba(238,248,255,.82)"></path>
+              <circle cx="30" cy="29" r="2.2" fill="rgba(255,255,255,.86)"></circle>
+              <circle cx="63" cy="28" r="1.8" fill="rgba(255,255,255,.82)"></circle>
+            </g>
+          `
+          : "";
 
       return `
         <svg viewBox="0 0 96 44" role="img" aria-label="PV panels">
@@ -1025,14 +1072,35 @@
               <stop offset="1" stop-color="rgba(135,150,162,.72)"></stop>
             </linearGradient>
           </defs>
+
           <g filter="drop-shadow(0 7px 7px rgba(0,0,0,.28))">
-            <path d="M9 10 H87 L79 35 H17 Z" fill="url(#vnpPvFrame_${uid})" opacity=".95"></path>
-            <path d="M14 13 H82 L75 32 H21 Z" fill="url(#vnpPvPanel_${uid})"></path>
-            <path d="M28 13 L24 32 M42 13 L39 32 M55 13 L57 32 M69 13 L72 32" stroke="rgba(255,255,255,.32)" stroke-width="1"></path>
-            <path d="M16 19 H80 M18 25 H78" stroke="rgba(255,255,255,.25)" stroke-width="1"></path>
-            <path d="M40 35 H56 L60 40 H36 Z" fill="rgba(180,190,196,.82)"></path>
-            <path d="M14 13 H82 L75 32 H21 Z" fill="rgba(0,0,0,${shadeOpacity})"></path>
-            <path d="M21 15 L31 15" stroke="rgba(255,255,255,.70)" stroke-width="1.4" stroke-linecap="round"></path>
+            <path d="M9 10 H87 L79 35 H17 Z"
+              fill="url(#vnpPvFrame_${uid})"
+              opacity=".95"></path>
+
+            <path d="M14 13 H82 L75 32 H21 Z"
+              fill="url(#vnpPvPanel_${uid})"></path>
+
+            <path d="M28 13 L24 32 M42 13 L39 32 M55 13 L57 32 M69 13 L72 32"
+              stroke="rgba(255,255,255,.32)"
+              stroke-width="1"></path>
+
+            <path d="M16 19 H80 M18 25 H78"
+              stroke="rgba(255,255,255,.25)"
+              stroke-width="1"></path>
+
+            <path d="M40 35 H56 L60 40 H36 Z"
+              fill="rgba(180,190,196,.82)"></path>
+
+            <path d="M14 13 H82 L75 32 H21 Z"
+              fill="rgba(0,0,0,${shadeOpacity})"></path>
+
+            ${snowOverlay}
+
+            <path d="M21 15 L31 15"
+              stroke="rgba(255,255,255,.70)"
+              stroke-width="1.4"
+              stroke-linecap="round"></path>
           </g>
         </svg>
       `;
