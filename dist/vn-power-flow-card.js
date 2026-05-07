@@ -1,10 +1,10 @@
 /*
  * VN Power Flow Card
- * Version: 0.9.2
+ * Version: 0.9.3
  */
 
 (() => {
-  const CARD_VERSION = "0.9.3";
+  const CARD_VERSION = "1.0.0";
   const CARD_TAG = "vn-power-flow-card";
   const EDITOR_TAG = "vn-power-flow-card-editor";
 
@@ -34,6 +34,11 @@
     "snowy",
     "snow_or_blocked",
     "blocked",
+  ]);
+
+  const RAIN_STATES = new Set([
+    "rainy",
+    "pouring",
   ]);
 
   class VNPowerFlowCard extends HTMLElement {
@@ -127,6 +132,12 @@
 
             <div class="vnp-stage" data-role="stage">
               <section class="vnp-sky">
+                <div class="vnp-stars" data-role="stars">
+                  <span></span><span></span><span></span><span></span>
+                  <span></span><span></span><span></span><span></span>
+                  <span></span><span></span><span></span><span></span>
+                </div>
+
                 <svg class="vnp-sky-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
                   <path class="vnp-sun-arc" data-role="sun-arc"></path>
                   <line class="vnp-horizon" x1="6" y1="86" x2="94" y2="86"></line>
@@ -156,6 +167,11 @@
                   <div class="vnp-cloud vnp-cloud-e"></div>
                 </div>
 
+                <div class="vnp-rain-layer" data-role="rain-layer">
+                  <span></span><span></span><span></span><span></span>
+                  <span></span><span></span><span></span><span></span>
+                </div>
+
                 <div class="vnp-snow-layer" data-role="snow-layer">
                   <span>❄</span>
                   <span>❄</span>
@@ -172,9 +188,14 @@
                 <div class="vnp-wire vnp-wire-horizontal vnp-wire-battery" data-wire="battery"></div>
 
                 <div class="vnp-pv-badge">
+                  <div class="vnp-pv-panels" data-role="pv-panels"></div>
                   <span data-text="pv-label">PV</span>
                   <strong data-text="pv-power">-- W</strong>
                   <small data-text="pv-sub">Solar input</small>
+                  <div class="vnp-pv-ratio-bar" data-role="pv-ratio-bar">
+                    <div class="vnp-pv-ratio-fill" data-role="pv-ratio-fill"></div>
+                    <span class="vnp-pv-ratio-label" data-text="pv-ratio">--%</span>
+                  </div>
                 </div>
 
                 <div class="vnp-inverter" data-role="inverter"></div>
@@ -193,7 +214,7 @@
                   <div class="vnp-battery-sub" data-text="battery-sub">--% / -- V / -- A</div>
                 </div>
 
-                <div class="vnp-home-node">
+                <div class="vnp-home-node" data-role="home-node">
                   <div data-role="home-icon"></div>
                   <div class="vnp-home-value" data-text="home-power">-- W</div>
                   <div class="vnp-home-sub" data-text="home-energy">-- kWh</div>
@@ -217,8 +238,32 @@
 
       this._setHTML('[data-role="inverter"]', this._inverterSvg());
       this._setHTML('[data-role="home-icon"]', this._homeSvg());
+      this._setHTML('[data-role="pv-panels"]', this._pvPanelsSvg("clear"));
+      this._initTooltips();
 
       this._rendered = true;
+    }
+
+    _initTooltips() {
+      const nodes = [
+        { sel: '[data-role="grid-node"]', role: "grid" },
+        { sel: '[data-role="battery-node"]', role: "battery" },
+        { sel: '[data-role="home-node"]', role: "home" },
+        { sel: ".vnp-pv-badge", role: "pv" },
+        { sel: '[data-role="inverter"]', role: "inverter" },
+      ];
+      nodes.forEach(({ sel, role }) => {
+        const el = this._q(sel);
+        if (!el) return;
+        el.style.cursor = "pointer";
+        el.addEventListener("click", () => this._showTooltip(role));
+      });
+      this.shadowRoot.addEventListener("click", (e) => {
+        const tip = this._q(".vnp-tooltip");
+        if (tip && !e.target.closest("[data-role]") && !e.target.closest(".vnp-pv-badge")) {
+          tip.remove();
+        }
+      });
     }
 
     _update() {
@@ -269,8 +314,13 @@
       const showClouds = this._bool(c.show_clouds, true) && CLOUDY_STATES.has(skyState);
       const showSnow = this._bool(c.show_snow, true) && SNOW_STATES.has(skyState);
 
+      const showRain = RAIN_STATES.has(skyState);
+
       const sun = this._sunData(c.sun_entity || "sun.sun");
       const missingEntities = this._missingEntities(c, this._hass);
+
+      const pvExpected = this._readNumber(c.pv_expected_power);
+      const pvRatio = (pvExpected > 0) ? Math.min(100, Math.max(0, pvW / pvExpected * 100)) : null;
 
       const flows = {
         sunToPv: pvW > threshold && !sun.night,
@@ -286,9 +336,9 @@
       const batteryMode = flows.batteryCharge ? "charge" : flows.batteryDischarge ? "discharge" : "idle";
 
       this._updateWarning(missingEntities);
-      this._updateSky(skyState, cloudLevel, showClouds, showSnow, sun, flows, pvW, maxPower);
+      this._updateSky(skyState, cloudLevel, showClouds, showSnow, showRain, sun, flows, pvW, maxPower);
       this._updateWires(flows, pvW, homeW, gridImportW, gridExportW, batteryChargeW, batteryDischargeW, maxPower);
-      this._updateMainValues(names, pvW, pv1W, pv2W, c, homeW, todayLoad, gridRawW, gridImportW, gridExportW, gridMode, batteryRawW, batterySoc, batteryVoltage, batteryCurrent, batteryMode);
+      this._updateMainValues(names, pvW, pv1W, pv2W, c, homeW, todayLoad, gridRawW, gridImportW, gridExportW, gridMode, batteryRawW, batterySoc, batteryVoltage, batteryCurrent, batteryMode, pvRatio, skyState);
 
       this._updateDetails({
         todayPv,
@@ -302,6 +352,7 @@
       });
 
       this._setDisplay('[data-role="details"]', this._bool(c.show_details, true));
+      this._tooltipData = { pvW, pvRatio, homeW, gridRawW, gridImportW, gridExportW, gridMode, batteryRawW, batterySoc, batteryVoltage, batteryCurrent, batteryMode, inverterTemp };
     }
         _updateWarning(missingEntities) {
       const warning = this._q('[data-role="warning"]');
