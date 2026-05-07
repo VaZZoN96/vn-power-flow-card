@@ -1,10 +1,10 @@
 /*
  * VN Power Flow Card
- * Fixed version: 1.0.1
+ * Fixed version: 1.0.2
  */
 
 (() => {
-  const CARD_VERSION = "1.0.1";
+  const CARD_VERSION = "1.0.2";
   const CARD_TAG = "vn-power-flow-card";
   const EDITOR_TAG = "vn-power-flow-card-editor";
 
